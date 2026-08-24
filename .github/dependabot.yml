@@ -14,10 +14,18 @@ updates:
     groups:
       frontend-dependencies:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: python
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
   - package-ecosystem: docker
     directory: /frontend
     schedule:
@@ -29,3 +37,6 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
