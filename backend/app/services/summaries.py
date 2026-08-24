@@ -54,5 +54,14 @@ def queue_depth(client: Redis | None = None) -> int | None:
         return None
 
 
+def queue_stats(client: Redis) -> dict[str, int | bool]:
+    return {
+        "waiting": int(client.llen(SUMMARY_QUEUE)),
+        "processing": int(client.llen(SUMMARY_PROCESSING_QUEUE)),
+        "dead_letter": int(client.llen(SUMMARY_DEAD_LETTER_QUEUE)),
+        "worker_available": worker_is_available(client),
+    }
+
+
 def worker_is_available(client: Redis) -> bool:
     return bool(client.exists(WORKER_HEARTBEAT_KEY))

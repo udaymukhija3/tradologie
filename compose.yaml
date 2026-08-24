@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+    stop_grace_period: 30s
 
   redis:
     image: redis:7.4.2-alpine
@@ -25,12 +27,15 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+    stop_grace_period: 30s
 
   backend:
     build:
       context: ./backend
       target: runtime
     environment:
+      APP_ENV: development
       DATABASE_URL: postgresql+psycopg://tradevoice:tradevoice-local@postgres:5432/tradevoice
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: local-compose-secret-replace-in-hosting
@@ -41,11 +46,24 @@ services:
       OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}
       OPENAI_REALTIME_VOICE: ${OPENAI_REALTIME_VOICE:-marin}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-local-twilio-test-token}
+      RUN_MIGRATIONS: "true"
+      AUTO_SEED: "true"
+      FORWARDED_ALLOW_IPS: "*"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   worker:
     build:
@@ -60,6 +78,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "python", "-c", "from redis import Redis; from app.config import get_settings; assert Redis.from_url(get_settings().redis_url).exists('tradevoice:summary-worker:heartbeat')"]
       interval: 5s
@@ -69,12 +97,22 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
     depends_on:
       backend:
         condition: service_healthy
       worker:
         condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   postgres-test:
     profiles: ["test"]

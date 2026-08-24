@@ -11,6 +11,7 @@ __pycache__/
 .coverage
 htmlcov/
 *.log
+*.dump
 *.db
 .playwright/
 test-results/

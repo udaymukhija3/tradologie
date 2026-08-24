@@ -4,6 +4,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from app.config import get_settings
@@ -43,6 +44,16 @@ def test_signed_twilio_webhook_and_replay(client):
     assert response.status_code == 200
     assert response.json()["call_status"] == "active"
     assert client.post("/api/telephony/twilio/events", data=parameters, headers={"X-Twilio-Signature": "bad"}).status_code == 403
+
+
+def test_twilio_webhook_fails_closed_when_provider_is_not_configured(client, monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main, "settings", replace(main.settings, twilio_auth_token=""))
+    response = client.post("/api/telephony/twilio/events", data={"CallSid": "CA123"})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Telephony provider is not configured"}
 
 
 def test_migration_builds_empty_database(tmp_path):

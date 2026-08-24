@@ -13,7 +13,7 @@ os.environ["AUTO_SEED"] = "false"
 os.environ["REDIS_URL"] = "redis://127.0.0.1:6399/15"
 os.environ["JWT_SECRET"] = "test-secret-that-is-long-enough-for-tests"
 
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
 from app.database import Base, SessionLocal, engine
 from app.main import app

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -17,25 +18,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import Principal, create_access_token, current_principal, principal_from_token, require_roles, verify_password
-from app.config import get_settings
+from app.config import get_settings, validate_runtime_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import Call, CallStatus, Distributor, Enquiry, SupportRequest, User, UserRole, VoiceAgent
+from app.observability import configure_logging, observe_request, render_metrics
 from app.providers.twilio import TwilioProvider
 from app.rate_limit import limiter
 from app.schemas import CallResponse, DashboardResponse, DistributorResponse, EnquiryResponse, LoginRequest, SimulatedCallRequest, TokenResponse, VoiceAgentResponse
 from app.seed_data import seed_database
 from app.services.calls import advance_call, create_simulated_call
-from app.services.summaries import enqueue_summary, queue_depth, worker_is_available
+from app.services.summaries import enqueue_summary, queue_stats
 from app.voice.mock import run_mock_session
 from app.voice.openai_realtime import DEFAULT_REALTIME_MODEL, RealtimeConfigurationError, RealtimeUpstreamError, create_openai_realtime_call, execute_realtime_tool, observe_user_transcript, session_store, update_session_context
 
 
 load_dotenv()
+configure_logging()
+logger = logging.getLogger("tradevoice.api")
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_runtime_settings(settings)
     if os.getenv("AUTO_CREATE_SCHEMA", "true").lower() == "true":
         Base.metadata.create_all(engine)
     if os.getenv("AUTO_SEED", "true").lower() == "true":
@@ -76,13 +81,25 @@ async def request_observability(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception as exc:
-        print(json.dumps({"event": "http_request_failed", "request_id": request_id, "method": request.method, "path": request.url.path, "duration_ms": round((time.perf_counter() - started_at) * 1000, 2), "error_type": type(exc).__name__}), flush=True)
+        duration_seconds = time.perf_counter() - started_at
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        observe_request(request.method, route, 500, duration_seconds)
+        logger.exception(
+            "http_request_failed",
+            extra={"request_id": request_id, "method": request.method, "route": route, "duration_ms": round(duration_seconds * 1000, 2), "error_type": type(exc).__name__},
+        )
         raise
-    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    duration_seconds = time.perf_counter() - started_at
+    duration_ms = round(duration_seconds * 1000, 2)
+    route = getattr(request.scope.get("route"), "path", "unmatched")
+    observe_request(request.method, route, response.status_code, duration_seconds)
     response.headers["x-request-id"] = request_id
     response.headers["server-timing"] = f"app;dur={duration_ms}"
     response.headers["cache-control"] = response.headers.get("cache-control", "no-store")
-    print(json.dumps({"event": "http_request_completed", "request_id": request_id, "method": request.method, "path": request.url.path, "status_code": response.status_code, "duration_ms": duration_ms}), flush=True)
+    logger.info(
+        "http_request_completed",
+        extra={"request_id": request_id, "method": request.method, "route": route, "status_code": response.status_code, "duration_ms": duration_ms},
+    )
     return response
 
 
@@ -128,15 +145,30 @@ def get_readiness(db: Session = Depends(get_db)):
     try:
         redis_client = Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
         redis_client.ping()
-        depth = queue_depth(redis_client)
-        if not worker_is_available(redis_client):
+        stats = queue_stats(redis_client)
+        depth = int(stats["waiting"])
+        if not stats["worker_available"]:
             worker_status = "unavailable"
     except Exception:
         redis_status = "degraded"
         worker_status = "synchronous_fallback"
     if redis_status == "ok" and worker_status != "ok":
         raise HTTPException(status_code=503, detail="Summary worker is unavailable")
-    return {"status": "ready", "database": "ok", "redis": redis_status, "summary_worker": worker_status, "summary_queue_depth": depth}
+    return {
+        "status": "ready",
+        "database": "ok",
+        "redis": redis_status,
+        "summary_worker": worker_status,
+        "summary_queue_depth": depth,
+        "summary_processing_depth": int(stats["processing"]) if redis_status == "ok" else None,
+        "summary_dead_letter_depth": int(stats["dead_letter"]) if redis_status == "ok" else None,
+    }
+
+
+@app.get("/internal/metrics", include_in_schema=False)
+def metrics():
+    content, media_type = render_metrics()
+    return Response(content=content, media_type=media_type)
 
 
 @app.get("/api/runtime")
@@ -211,6 +243,8 @@ def simulate_call(payload: SimulatedCallRequest, principal: Principal = Depends(
 
 @app.post("/api/telephony/twilio/events")
 async def twilio_event(request: Request, db: Session = Depends(get_db)):
+    if not settings.twilio_auth_token:
+        raise HTTPException(status_code=503, detail="Telephony provider is not configured")
     parameters = {key: str(value) for key, value in (await request.form()).items()}
     provider = TwilioProvider(settings.twilio_auth_token)
     signature = request.headers.get("x-twilio-signature", "")
@@ -256,7 +290,7 @@ async def create_realtime_call_route(payload: RealtimeCallRequest, request: Requ
     except RealtimeConfigurationError:
         raise HTTPException(status_code=503, detail="OpenAI realtime is not configured") from None
     except RealtimeUpstreamError as exc:
-        print(json.dumps({"event": "realtime_call_setup_failed", "upstream_status": exc.status_code, "upstream_request_id": exc.request_id}), flush=True)
+        logger.warning("realtime_call_setup_failed", extra={"upstream_status": exc.status_code, "upstream_request_id": exc.request_id})
         raise HTTPException(status_code=502, detail="OpenAI realtime session setup failed") from None
     return Response(content=answer_sdp, media_type="application/sdp", headers={"x-tradevoice-session-id": session.session_id, "cache-control": "no-store", "x-upstream-request-id": upstream_request_id or ""})
 
@@ -322,7 +356,7 @@ async def websocket_endpoint(websocket: WebSocket):
         except WebSocketDisconnect:
             pass
         except Exception as exc:
-            print(json.dumps({"event": "websocket_session_failed", "error_type": type(exc).__name__}), flush=True)
+            logger.exception("websocket_session_failed", extra={"error_type": type(exc).__name__})
             try:
                 await websocket.send_json({"type": "error", "message": "The voice session could not be initialized."})
             except Exception:

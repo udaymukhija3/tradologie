@@ -1,7 +1,9 @@
-.PHONY: install migrate seed verify-core verify verify-postgres backend frontend docker-up docker-down docker-verify
+.PHONY: install migrate seed verify-core verify verify-postgres verify-infrastructure backup verify-backup backend frontend docker-up docker-down docker-verify
+
+PYTHON ?= python3.12
 
 install:
-	python3 -m venv backend/venv
+	$(PYTHON) -m venv backend/venv
 	backend/venv/bin/python -m pip install -r backend/requirements-dev.txt
 	cd frontend && npm ci
 
@@ -22,6 +24,15 @@ verify: verify-core
 verify-postgres:
 	./scripts/verify-postgres.sh
 
+verify-infrastructure:
+	./scripts/verify-infrastructure.sh
+
+backup:
+	./scripts/backup-postgres.sh
+
+verify-backup:
+	./scripts/verify-backup.sh
+
 backend:
 	cd backend && venv/bin/alembic -c alembic.ini upgrade head && venv/bin/python -m app.seed && venv/bin/python -m app.main
 
@@ -36,4 +47,5 @@ docker-down:
 
 docker-verify:
 	docker compose config -q
+	IMAGE_TAG=verification DATABASE_URL=postgresql+psycopg://tradevoice:secret@postgres.example.com:5432/tradevoice REDIS_URL=rediss://redis.example.com:6380/0 JWT_SECRET=verification-secret-with-more-than-32-characters ALLOWED_ORIGINS=https://tradevoice.example.com PUBLIC_BASE_URL=https://tradevoice.example.com docker compose -f compose.production.yaml config -q
 	docker compose build

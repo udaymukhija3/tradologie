@@ -8,6 +8,19 @@ def test_liveness_readiness_and_runtime(client):
     assert ready.status_code == 200
     assert ready.json()["database"] == "ok"
     assert ready.json()["redis"] == "degraded"
+    assert ready.json()["summary_processing_depth"] is None
+    assert ready.json()["summary_dead_letter_depth"] is None
+
+
+def test_internal_metrics_have_bounded_route_labels(client):
+    client.get("/api/health/live")
+    metrics = client.get("/internal/metrics")
+
+    assert metrics.status_code == 200
+    assert "tradevoice_http_requests_total" in metrics.text
+    assert 'route="/api/health/live"' in metrics.text
+    assert "tradevoice_db_pool_checked_out_connections" in metrics.text
+    assert "tradevoice_summary_worker_available" in metrics.text
 
 
 def test_authentication_is_required_and_bad_credentials_are_generic(client):

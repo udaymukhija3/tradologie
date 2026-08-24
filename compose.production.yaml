@@ -1,0 +1,120 @@
+name: tradevoice-production
+
+x-backend-image: &backend-image ghcr.io/udaymukhija3/tradologie-backend:${IMAGE_TAG:?Set IMAGE_TAG to a release tag or sha-<commit>}
+x-app-environment: &app-environment
+  APP_ENV: production
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to managed PostgreSQL}
+  REDIS_URL: ${REDIS_URL:?Set REDIS_URL to managed Redis}
+  JWT_SECRET: ${JWT_SECRET:?Set a unique JWT_SECRET of at least 32 characters}
+  JWT_ISSUER: ${JWT_ISSUER:-tradevoice}
+  ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-60}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set the HTTPS browser origin}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set the public HTTPS URL}
+  VOICE_MODE: ${VOICE_MODE:-mock}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}
+  OPENAI_REALTIME_VOICE: ${OPENAI_REALTIME_VOICE:-marin}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  RUN_MIGRATIONS: "false"
+  AUTO_SEED: "false"
+  FORWARDED_ALLOW_IPS: "*"
+
+x-runtime-hardening: &runtime-hardening
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  restart: unless-stopped
+  stop_grace_period: 30s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  migrate:
+    image: *backend-image
+    entrypoint: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    environment: *app-environment
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - application
+
+  backend:
+    image: *backend-image
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/live', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+        reservations:
+          memory: 256M
+    networks:
+      - application
+    <<: *runtime-hardening
+
+  worker:
+    image: *backend-image
+    entrypoint: ["python", "-m", "app.worker"]
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "from redis import Redis; from app.config import get_settings; assert Redis.from_url(get_settings().redis_url).exists('tradevoice:summary-worker:heartbeat')"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+        reservations:
+          memory: 128M
+    networks:
+      - application
+    <<: *runtime-hardening
+
+  frontend:
+    image: ghcr.io/udaymukhija3/tradologie-frontend:${IMAGE_TAG:?Set IMAGE_TAG to a release tag or sha-<commit>}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          memory: 32M
+    networks:
+      - application
+    <<: *runtime-hardening
+
+networks:
+  application:
+    internal: false

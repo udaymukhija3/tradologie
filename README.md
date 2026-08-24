@@ -11,6 +11,7 @@ The default demo is deterministic and does not need paid credentials. There is a
 ```text
 Browser -> Nginx -> FastAPI -> PostgreSQL
                          |-> Redis queue -> summary worker
+                         |-> Prometheus metrics + JSON logs
 Voice UI -> authenticated WebSocket or OpenAI Realtime adapter
 Carrier  -> signed lifecycle webhook -> call state machine
 ```
@@ -22,7 +23,9 @@ The repository includes:
 - durable, expiring confirmations with exact-payload hashes and one-time consumption;
 - idempotent call and enquiry creation, audit events, and row-locked public ID allocation;
 - Alembic migrations, PostgreSQL integration tests, Redis retries and dead-letter handling;
-- health checks, worker heartbeat, request IDs, structured logs, and bounded inputs;
+- health checks, worker heartbeat, low-cardinality Prometheus metrics, request IDs, structured JSON logs, and bounded inputs;
+- non-root read-only containers, a one-shot migration job, restore-tested backups, and resource limits;
+- immutable GHCR release images with SBOM/provenance attestations and weekly dependency updates;
 - a React dashboard and a Playwright test for the complete demo flow.
 
 ## Run it locally
@@ -45,7 +48,7 @@ TradeVoice123!
 The readiness response should report PostgreSQL, Redis, and the summary worker as healthy:
 
 ```json
-{"status":"ready","database":"ok","redis":"ok","summary_worker":"ok","summary_queue_depth":0}
+{"status":"ready","database":"ok","redis":"ok","summary_worker":"ok","summary_queue_depth":0,"summary_processing_depth":0,"summary_dead_letter_depth":0}
 ```
 
 When you are finished:
@@ -72,6 +75,7 @@ The mock flow uses the same authorization, confirmation, tool, persistence, and 
 Install the local development dependencies once:
 
 ```bash
+# Python 3.12 and Node 20.19+ are required for the no-Docker toolchain
 make install
 cd frontend && npx playwright install chromium && cd ..
 ```
@@ -82,9 +86,42 @@ Then run:
 make verify             # backend tests, lint, build, and Playwright
 make verify-postgres    # the backend suite against an isolated PostgreSQL container
 make docker-verify      # validate Compose and build the production images
+make verify-infrastructure # boot an isolated stack and prove backup recovery
 ```
 
-GitHub Actions runs the backend suite against PostgreSQL and runs the frontend lint, build, and browser test on every push and pull request.
+GitHub Actions runs the backend suite against PostgreSQL, the frontend lint/build/browser test, dependency audits, and the isolated infrastructure smoke test on every push and pull request.
+
+## Production shape
+
+The production path is intentionally small: an HTTPS load balancer or host proxy points at the frontend container; only Nginx can reach the API; the API and worker use managed PostgreSQL and Redis. `compose.production.yaml` does not quietly start production data stores on the application host.
+
+Every push to `main` publishes backend and frontend images to GitHub Container Registry using immutable `sha-<commit>` tags. A `v*` tag also creates versioned image tags. The workflow attaches an SBOM, BuildKit provenance, and a GitHub artifact attestation to each image. Publishing images is not the same as claiming a live deployment; this repository currently has no public demo environment.
+
+To deploy those images on a Docker host behind TLS, provide a full commit tag plus managed service URLs and a unique secret:
+
+```bash
+export IMAGE_TAG=sha-<full-git-commit>
+export DATABASE_URL=postgresql+psycopg://<user>:<password>@<host>:5432/<database>
+export REDIS_URL=rediss://<host>:6380/0
+export JWT_SECRET=<at-least-32-random-characters>
+export ALLOWED_ORIGINS=https://tradevoice.example.com
+export PUBLIC_BASE_URL=https://tradevoice.example.com
+
+docker compose -f compose.production.yaml pull
+docker compose -f compose.production.yaml up -d
+docker compose -f compose.production.yaml ps
+```
+
+The one-shot `migrate` service must finish before the API and worker start. Production startup fails closed if the database is SQLite, the JWT secret is weak, or the public URLs are not HTTPS. The API exposes Prometheus data at `/internal/metrics`; Nginx deliberately does not publish that route, so it is available only to a collector on the application network.
+
+For the local Compose database, create and verify a portable custom-format backup with:
+
+```bash
+make backup
+make verify-backup
+```
+
+`make verify-backup` restores the archive into a temporary database, checks its contents, and removes the temporary database. In a hosted environment, use the managed PostgreSQL provider's automated snapshots as the primary recovery mechanism and test restores separately.
 
 ## Run without Docker
 
@@ -119,4 +156,4 @@ The permanent project key stays in the backend. The browser receives only the ne
 
 ## Deliberate limits
 
-This is a portfolio-scale vertical slice, not a complete contact-centre product. It does not include live PSTN media streaming, recording consent, DTMF, warm transfer, billing, RAG, multilingual evaluation, cloud infrastructure, or production traffic claims. Realtime session state and rate limiting are still process-local, so they would need to move to shared storage before horizontally scaling the API.
+This is a portfolio-scale vertical slice, not a complete contact-centre product. It does not include live PSTN media streaming, recording consent, DTMF, warm transfer, billing, RAG, multilingual evaluation, a public cloud environment, or production traffic claims. TLS termination, managed PostgreSQL/Redis provisioning, DNS, and automated provider snapshots remain host responsibilities. Realtime session state and rate limiting are still process-local, so the production topology deliberately runs one API replica until those move to shared storage.
