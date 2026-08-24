@@ -11,6 +11,12 @@ export ALLOWED_ORIGINS=http://127.0.0.1:15173
 export PYTHONPYCACHEPREFIX=/tmp/tradevoice_e2e_pycache
 
 cd ../backend
-venv/bin/alembic -c alembic.ini upgrade head
-venv/bin/python -m app.seed
-exec venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18000
+if [ -x venv/bin/python ]; then
+  PYTHON_BIN=venv/bin/python
+else
+  PYTHON_BIN=python3
+fi
+
+"$PYTHON_BIN" -m alembic -c alembic.ini upgrade head
+"$PYTHON_BIN" -m app.seed
+exec "$PYTHON_BIN" -m uvicorn app.main:app --host 127.0.0.1 --port 18000
