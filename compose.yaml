@@ -1,0 +1,107 @@
+name: tradevoice
+
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_DB: tradevoice
+      POSTGRES_USER: tradevoice
+      POSTGRES_PASSWORD: tradevoice-local
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradevoice -d tradevoice"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+psycopg://tradevoice:tradevoice-local@postgres:5432/tradevoice
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: local-compose-secret-replace-in-hosting
+      ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      PUBLIC_BASE_URL: http://localhost:8080
+      VOICE_MODE: ${VOICE_MODE:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}
+      OPENAI_REALTIME_VOICE: ${OPENAI_REALTIME_VOICE:-marin}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-local-twilio-test-token}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      target: runtime
+    entrypoint: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://tradevoice:tradevoice-local@postgres:5432/tradevoice
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from redis import Redis; from app.config import get_settings; assert Redis.from_url(get_settings().redis_url).exists('tradevoice:summary-worker:heartbeat')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+
+  postgres-test:
+    profiles: ["test"]
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_DB: tradevoice_test
+      POSTGRES_USER: tradevoice
+      POSTGRES_PASSWORD: tradevoice-test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradevoice -d tradevoice_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  test:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgresql+psycopg://tradevoice:tradevoice-test@postgres-test:5432/tradevoice_test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
