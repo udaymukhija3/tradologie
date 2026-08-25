@@ -1,58 +1,69 @@
+"""The credential-free conversational engine.
+
+Dialogue management only: this module owns the socket, the tools, the
+confirmation lifecycle and the session's slot-filling state. All language
+understanding lives in app.voice.nlu, which is pure and separately tested.
+
+The engine is deterministic by design -- it is the fallback that runs without
+an OpenAI project key -- but deterministic is not the same as scripted. It
+resolves intent by weighted evidence, extracts entities with real grammars,
+asks follow-up questions when a request is under-specified, and answers from
+the caller's own workspace data rather than from hardcoded demo nouns.
+"""
+
 import json
-import re
 import time
 import uuid
 from typing import Any, Dict, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import Principal
+from app.models import Distributor
 from app.schemas import EnquiryCreate
 from app.services.enquiries import cancel_confirmation, confirm_confirmation, prepare_confirmation
 from app.tools import registry
+from app.voice import nlu
+from app.voice.nlu import Intent
 
 
 MAX_TEXT_LENGTH = 4_096
 MAX_EVENT_LENGTH = 16_384
+
+# Below this, the winning intent is not distinct enough to act on. Asking beats
+# guessing: running a distributor search for "I can't find my invoice" is worse
+# than a clarifying question.
+MIN_ACTIONABLE_CONFIDENCE = 0.4
+
+CAPABILITIES = (
+    "I can search distributors, describe the one you have selected, check an "
+    "enquiry by its ID, raise a new enquiry once you confirm it, or put you "
+    "through to a person."
+)
 
 
 def _log(event: str, **fields: Any) -> None:
     print(json.dumps({"event": event, **fields}, default=str), flush=True)
 
 
-def _normalise_unit(unit: str) -> str:
-    value = unit.lower()
-    if value in {"ton", "tons", "tonne", "tonnes"}:
-        return "tonnes"
-    if value in {"kilogram", "kilograms", "kg"}:
-        return "kg"
-    return value
+def _workspace_vocabulary(db: Session, workspace_id: str) -> tuple[list[str], list[str]]:
+    """Product and location vocabulary drawn from the tenant's own catalogue."""
+    rows = db.scalars(
+        select(Distributor).where(Distributor.workspace_id == workspace_id).limit(200)
+    ).all()
+    products: set[str] = set()
+    locations: set[str] = set()
+    for row in rows:
+        if row.location:
+            locations.add(row.location)
+        for category in row.categories or []:
+            products.add(category)
+    return sorted(products), sorted(locations)
 
 
-def _title_product(product: str) -> str:
-    return " ".join(word.capitalize() for word in product.strip().split())
-
-
-def _parse_enquiry_request(text: str) -> Optional[Dict[str, Any]]:
-    pattern = re.compile(
-        r"\b(?:i\s+need|i\s+want|create(?:\s+an)?\s+enquiry\s+for)\s+"
-        r"(?P<quantity>\d+)\s+"
-        r"(?P<unit>tonnes?|tons?|kg|kilograms?)\s+"
-        r"(?:of\s+)?(?P<product>.+?)\s+"
-        r"(?:for|to)\s+(?P<destination>[a-z][a-z\s-]*?)[.!?]*$",
-        re.IGNORECASE,
-    )
-    match = pattern.search(text.strip())
-    if not match:
-        return None
-
-    return {
-        "product": _title_product(match.group("product")),
-        "quantity": int(match.group("quantity")),
-        "unit": _normalise_unit(match.group("unit")),
-        "destination": match.group("destination").strip().title(),
-        "distributor_id": None,
-    }
+def _describe(draft: nlu.EnquiryDraft) -> str:
+    return f"{draft.quantity} {draft.unit} of {draft.product} for delivery to {draft.destination}"
 
 
 async def run_mock_session(
@@ -61,16 +72,19 @@ async def run_mock_session(
     db: Session,
     principal: Principal,
 ):
-    """Run the deterministic, credential-free local demo engine."""
+    """Run the deterministic, credential-free conversational engine."""
 
     session_id = uuid.uuid4().hex
     pending_enquiry: Optional[Dict[str, Any]] = None
     pending_confirmation_id: Optional[str] = None
+    slots: Dict[str, Any] = {}
+
+    products, locations = _workspace_vocabulary(db, principal.workspace_id)
 
     await websocket.send_json(
         {"type": "session_started", "session_id": session_id, "engine": "local_demo"}
     )
-    _log("session_started", session_id=session_id)
+    _log("session_started", session_id=session_id, vocabulary_products=len(products))
 
     async def send_response(text: str, request_id: str, started_at: float) -> None:
         latency_ms = round((time.perf_counter() - started_at) * 1000)
@@ -146,6 +160,37 @@ async def run_mock_session(
             status=result.get("status"),
         )
         return result
+
+    async def propose_enquiry(draft: nlu.EnquiryDraft, request_id: str, started_at: float):
+        """Stage an exact, confirmable action. Nothing is written yet."""
+        arguments = draft.as_tool_arguments()
+        try:
+            validated = EnquiryCreate.model_validate(arguments)
+        except Exception:
+            await send_response(
+                f"I could not use those details. Quantities must be a whole number "
+                f"above zero, and I support kg, tonnes and units. {CAPABILITIES}",
+                request_id,
+                started_at,
+            )
+            return None, None
+
+        confirmation = prepare_confirmation(db, principal, session_id, validated)
+        await websocket.send_json(
+            {
+                "type": "confirmation_required",
+                "request_id": request_id,
+                "action": "create_enquiry",
+                "arguments": arguments,
+            }
+        )
+        await send_response(
+            f"Please confirm: create an enquiry for {_describe(draft)}? "
+            "Say confirm or cancel.",
+            request_id,
+            started_at,
+        )
+        return validated.model_dump(mode="json"), confirmation.id
 
     try:
         while True:
@@ -223,19 +268,33 @@ async def run_mock_session(
 
             started_at = time.perf_counter()
             request_id = uuid.uuid4().hex[:12]
-            text = user_text.lower()
+
+            classification = nlu.classify(
+                user_text,
+                has_pending_action=pending_enquiry is not None,
+                has_selection=bool(context.get("selected_distributor_id")),
+            )
+            intent = classification.intent
             _log(
                 "user_message_received",
                 session_id=session_id,
                 request_id=request_id,
                 character_count=len(user_text),
+                intent=intent.value,
+                confidence=classification.confidence,
             )
 
-            if pending_enquiry and text in {"confirm", "confirmed", "yes", "yes confirm"}:
+            # ---------- confirmation lifecycle ----------
+
+            if pending_enquiry is not None and intent is Intent.CONFIRM:
                 if not pending_confirmation_id or confirm_confirmation(db, principal, pending_confirmation_id) is None:
                     pending_enquiry = None
                     pending_confirmation_id = None
-                    await send_response("That confirmation expired. Please state the enquiry again.", request_id, started_at)
+                    await send_response(
+                        "That confirmation expired. Please state the enquiry again.",
+                        request_id,
+                        started_at,
+                    )
                     continue
                 result = await execute_tool(
                     "create_enquiry",
@@ -259,7 +318,7 @@ async def run_mock_session(
                     )
                 continue
 
-            if pending_enquiry and text in {"cancel", "cancel it", "no", "no cancel"}:
+            if pending_enquiry is not None and intent is Intent.CANCEL:
                 if pending_confirmation_id:
                     cancel_confirmation(db, principal, pending_confirmation_id)
                 pending_enquiry = None
@@ -271,43 +330,100 @@ async def run_mock_session(
                 )
                 continue
 
-            if text in {"confirm", "confirmed", "yes", "yes confirm"}:
+            if intent is Intent.CONFIRM:
                 await send_response(
-                    "There is no pending action to confirm. Tell me what enquiry you want to create first.",
+                    "There is no pending action to confirm. Tell me what enquiry "
+                    "you want to create first.",
                     request_id,
                     started_at,
                 )
                 continue
 
-            enquiry_request = _parse_enquiry_request(user_text)
-            if enquiry_request:
-                try:
-                    validated = EnquiryCreate.model_validate(enquiry_request)
-                except Exception:
-                    await send_response("The enquiry details were invalid.", request_id, started_at)
+            if intent is Intent.CANCEL and slots:
+                slots = {}
+                await send_response(
+                    "No problem, I have dropped that request.", request_id, started_at
+                )
+                continue
+
+            # ---------- multi-turn slot filling ----------
+            # An under-specified enquiry parks its known slots and asks for the
+            # rest, so "I need 50 tonnes of rice" / "Dubai" completes over two
+            # turns instead of dead-ending.
+
+            if slots:
+                awaiting_destination = "destination" in slots["missing"]
+                restated = nlu.extract_enquiry(user_text)
+                draft = None
+
+                if restated.complete:
+                    # The caller restated the whole request rather than
+                    # answering the question. Prefer what they just said.
+                    draft = restated.draft
+                elif awaiting_destination and intent in {Intent.UNKNOWN, Intent.CREATE_ENQUIRY}:
+                    place = nlu.tokenise(user_text)[:4]
+                    if place:
+                        draft = nlu.EnquiryDraft(
+                            product=str(slots["product"]),
+                            quantity=int(slots["quantity"]),
+                            unit=str(slots["unit"]),
+                            destination=nlu.titlecase(place),
+                        )
+
+                slots = {}
+                if draft is not None:
+                    pending_enquiry, pending_confirmation_id = await propose_enquiry(
+                        draft, request_id, started_at
+                    )
                     continue
-                pending_enquiry = validated.model_dump(mode="json")
-                confirmation = prepare_confirmation(db, principal, session_id, validated)
-                pending_confirmation_id = confirmation.id
-                await websocket.send_json(
-                    {
-                        "type": "confirmation_required",
-                        "request_id": request_id,
-                        "action": "create_enquiry",
-                        "arguments": enquiry_request,
-                    }
-                )
+
+            # ---------- intents ----------
+
+            if intent is Intent.CREATE_ENQUIRY:
+                extraction = nlu.extract_enquiry(user_text)
+
+                if extraction.complete:
+                    pending_enquiry, pending_confirmation_id = await propose_enquiry(
+                        extraction.draft, request_id, started_at
+                    )
+                    continue
+
+                if extraction.unsupported_unit is not None:
+                    await send_response(
+                        f"I cannot raise an enquiry in {extraction.unsupported_unit}. "
+                        "Tell me the quantity in kg, tonnes or units and I will "
+                        "read the enquiry back to you.",
+                        request_id,
+                        started_at,
+                    )
+                    continue
+
+                if "destination" in extraction.missing and "product" not in extraction.missing:
+                    slots = {**extraction.partial, "missing": extraction.missing}
+                    await send_response(
+                        f"I have {extraction.partial['quantity']} "
+                        f"{extraction.partial['unit']} of "
+                        f"{extraction.partial['product']}. Where should it be delivered?",
+                        request_id,
+                        started_at,
+                    )
+                    continue
+
+                if "quantity" in extraction.missing or "unit" in extraction.missing:
+                    await send_response(
+                        "How much do you need, and in what unit? I work in kg, "
+                        "tonnes and units.",
+                        request_id,
+                        started_at,
+                    )
+                    continue
+
                 await send_response(
-                    "Please confirm: create an enquiry for "
-                    f"{enquiry_request['quantity']} {enquiry_request['unit']} of "
-                    f"{enquiry_request['product']} for delivery to "
-                    f"{enquiry_request['destination']}? Say confirm or cancel.",
-                    request_id,
-                    started_at,
+                    "What product should the enquiry be for?", request_id, started_at
                 )
                 continue
 
-            if "this distributor" in text:
+            if intent is Intent.DESCRIBE_SELECTED:
                 result = await execute_tool("get_distributor", {}, request_id)
                 if result.get("status") == "success":
                     distributor = result["distributor"]
@@ -326,56 +442,72 @@ async def run_mock_session(
                     )
                 continue
 
-            if "search" in text or "find" in text or "supplier" in text:
-                product = "basmati rice" if "basmati" in text else ""
-                location = "punjab" if "punjab" in text else ""
+            if intent is Intent.SEARCH_DISTRIBUTORS and classification.confidence >= MIN_ACTIONABLE_CONFIDENCE:
+                found = nlu.extract_search_slots(
+                    user_text, products=products, locations=locations
+                )
                 result = await execute_tool(
                     "search_distributors",
-                    {"product": product, "location": location},
+                    {"product": found.product, "location": found.location},
                     request_id,
                 )
                 matches = result.get("results", [])
-                if matches:
-                    first = matches[0]
+                if not matches:
+                    criteria = " and ".join(
+                        part for part in (found.product, found.location) if part
+                    )
                     await send_response(
-                        f"I found {first['name']} in {first['location']}. "
-                        f"They are {first['status'].lower()} and supply "
-                        f"{', '.join(first['categories'])}.",
+                        f"I could not find a distributor for {criteria}."
+                        if criteria
+                        else "I could not find a distributor matching those criteria.",
                         request_id,
                         started_at,
                     )
-                else:
-                    await send_response(
-                        "I could not find a distributor matching those criteria.",
-                        request_id,
-                        started_at,
-                    )
+                    continue
+
+                first = matches[0]
+                lead = (
+                    f"{first['name']} in {first['location']} is {first['status'].lower()} "
+                    f"and supplies {', '.join(first['categories'])}."
+                )
+                if len(matches) > 1:
+                    others = ", ".join(row["name"] for row in matches[1:3])
+                    lead += f" I also found {others}."
+                await send_response(lead, request_id, started_at)
                 continue
 
-            enquiry_match = re.search(r"\bENQ-\d+\b", user_text, re.IGNORECASE)
-            if enquiry_match:
-                enquiry_id = enquiry_match.group(0).upper()
+            if intent is Intent.CHECK_ENQUIRY and classification.enquiry_id:
                 result = await execute_tool(
-                    "get_enquiry_status", {"enquiry_id": enquiry_id}, request_id
+                    "get_enquiry_status",
+                    {"enquiry_id": classification.enquiry_id},
+                    request_id,
                 )
                 if result.get("status") == "success":
                     enquiry = result["enquiry"]
                     await send_response(
-                        f"{enquiry_id} is currently {enquiry['status']}. It is for "
-                        f"{enquiry['quantity']} {enquiry['unit']} of {enquiry['product']} "
-                        f"to {enquiry['destination']}.",
+                        f"{classification.enquiry_id} is currently {enquiry['status']}. "
+                        f"It is for {enquiry['quantity']} {enquiry['unit']} of "
+                        f"{enquiry['product']} to {enquiry['destination']}.",
                         request_id,
                         started_at,
                     )
                 else:
                     await send_response(
-                        f"I could not find enquiry {enquiry_id}.",
+                        f"I could not find enquiry {classification.enquiry_id}.",
                         request_id,
                         started_at,
                     )
                 continue
 
-            if any(word in text for word in ("person", "human", "someone", "agent")):
+            if intent is Intent.CHECK_ENQUIRY:
+                await send_response(
+                    "Which enquiry? Give me the reference, for example ENQ-1001.",
+                    request_id,
+                    started_at,
+                )
+                continue
+
+            if intent is Intent.HUMAN_SUPPORT:
                 result = await execute_tool(
                     "request_human_support", {"reason": user_text}, request_id
                 )
@@ -387,15 +519,18 @@ async def run_mock_session(
                     )
                 else:
                     await send_response(
-                        "I could not record the support request.",
-                        request_id,
-                        started_at,
+                        "I could not record the support request.", request_id, started_at
                     )
                 continue
 
+            if intent is Intent.GREETING:
+                await send_response(
+                    f"Hello. {CAPABILITIES}", request_id, started_at
+                )
+                continue
+
             await send_response(
-                "I can search distributors, check an enquiry, create a confirmed enquiry, "
-                "or request human support. Please try one of those tasks.",
+                f"I did not catch what you need there. {CAPABILITIES}",
                 request_id,
                 started_at,
             )
