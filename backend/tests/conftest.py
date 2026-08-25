@@ -5,7 +5,6 @@ import tempfile
 
 import pytest
 
-
 TEST_DATABASE = os.path.join(tempfile.gettempdir(), f"tradevoice-tests-{os.getpid()}.db")
 os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", f"sqlite:///{TEST_DATABASE}")
 os.environ["AUTO_CREATE_SCHEMA"] = "false"

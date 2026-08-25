@@ -22,10 +22,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, Sequence
-
 
 # --------------------------------------------------------------------------
 # normalisation
@@ -57,13 +56,27 @@ _CONTRACTIONS = {
     "aren't": "are not",
 }
 
-_SMART_QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+_SMART_QUOTES = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})  # noqa: RUF001
 
 # Filler that may trail a destination or product without belonging to it.
 _TRAILING_FILLER = {
-    "please", "thanks", "thank", "you", "asap", "urgently", "urgent",
-    "immediately", "soon", "quickly", "now", "today", "tomorrow",
-    "ok", "okay", "cheers", "kindly",
+    "please",
+    "thanks",
+    "thank",
+    "you",
+    "asap",
+    "urgently",
+    "urgent",
+    "immediately",
+    "soon",
+    "quickly",
+    "now",
+    "today",
+    "tomorrow",
+    "ok",
+    "okay",
+    "cheers",
+    "kindly",
 }
 
 _LEADING_ARTICLES = {"a", "an", "the", "some", "any", "me", "us"}
@@ -80,13 +93,7 @@ def tokenise(text: str) -> list[str]:
     """Split into word tokens, preserving unicode letters, digits and hyphens."""
     # Grouped digits ("1,000") must survive as one token or the thousands
     # separator silently truncates the quantity.
-    return [
-        token
-        for token in re.findall(
-            r"\d[\d,]*\d|[^\W_]+(?:[-'][^\W_]+)*", normalise(text), re.UNICODE
-        )
-        if token
-    ]
+    return [token for token in re.findall(r"\d[\d,]*\d|[^\W_]+(?:[-'][^\W_]+)*", normalise(text), re.UNICODE) if token]
 
 
 def _strip_filler(tokens: Sequence[str]) -> list[str]:
@@ -108,14 +115,37 @@ def titlecase(tokens: Sequence[str]) -> str:
 # --------------------------------------------------------------------------
 
 _SMALL_NUMBERS = {
-    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
-    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
-    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
-    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
 }
 _TENS = {
-    "twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50,
-    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fourty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
 }
 _SCALES = {"hundred": 100, "thousand": 1_000, "lakh": 100_000, "million": 1_000_000}
 _NUMBER_WORDS = set(_SMALL_NUMBERS) | set(_TENS) | set(_SCALES)
@@ -187,21 +217,60 @@ _UNIT_PHRASES: list[tuple[tuple[str, ...], str]] = [
     (("metric", "ton"), "tonnes"),
 ]
 _UNIT_WORDS = {
-    "tonnes": "tonnes", "tonne": "tonnes", "tons": "tonnes", "ton": "tonnes",
-    "t": "tonnes", "mt": "tonnes", "mts": "tonnes",
-    "kg": "kg", "kgs": "kg", "kilo": "kg", "kilos": "kg",
-    "kilogram": "kg", "kilograms": "kg", "kilogramme": "kg", "kilogrammes": "kg",
-    "unit": "units", "units": "units", "piece": "units", "pieces": "units",
-    "pc": "units", "pcs": "units",
+    "tonnes": "tonnes",
+    "tonne": "tonnes",
+    "tons": "tonnes",
+    "ton": "tonnes",
+    "t": "tonnes",
+    "mt": "tonnes",
+    "mts": "tonnes",
+    "kg": "kg",
+    "kgs": "kg",
+    "kilo": "kg",
+    "kilos": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "kilogramme": "kg",
+    "kilogrammes": "kg",
+    "unit": "units",
+    "units": "units",
+    "piece": "units",
+    "pieces": "units",
+    "pc": "units",
+    "pcs": "units",
 }
 
 # Recognised but not representable in the enquiry schema. Naming them lets the
 # agent say something useful instead of silently failing to parse.
 _UNSUPPORTED_UNITS = {
-    "bag", "bags", "sack", "sacks", "carton", "cartons", "box", "boxes",
-    "crate", "crates", "container", "containers", "pallet", "pallets",
-    "quintal", "quintals", "litre", "litres", "liter", "liters", "lb", "lbs",
-    "pound", "pounds", "bushel", "bushels", "truckload", "truckloads",
+    "bag",
+    "bags",
+    "sack",
+    "sacks",
+    "carton",
+    "cartons",
+    "box",
+    "boxes",
+    "crate",
+    "crates",
+    "container",
+    "containers",
+    "pallet",
+    "pallets",
+    "quintal",
+    "quintals",
+    "litre",
+    "litres",
+    "liter",
+    "liters",
+    "lb",
+    "lbs",
+    "pound",
+    "pounds",
+    "bushel",
+    "bushels",
+    "truckload",
+    "truckloads",
 }
 
 
@@ -248,9 +317,25 @@ _STRONG_MARKERS = {marker for marker in _DESTINATION_MARKERS if marker[-1] == "t
 # "50 tonnes of rice for export to Dubai" must yield "Rice", not "Rice For
 # Export", once the destination marker has been chosen.
 _PRODUCT_TRAILING_NOISE = {
-    "for", "to", "of", "delivery", "shipment", "export", "exports",
-    "delivered", "shipped", "shipping", "destined", "bound", "deliver",
-    "ship", "send", "sending", "dispatch", "dispatched", "consignment",
+    "for",
+    "to",
+    "of",
+    "delivery",
+    "shipment",
+    "export",
+    "exports",
+    "delivered",
+    "shipped",
+    "shipping",
+    "destined",
+    "bound",
+    "deliver",
+    "ship",
+    "send",
+    "sending",
+    "dispatch",
+    "dispatched",
+    "consignment",
 }
 
 
@@ -357,11 +442,7 @@ def extract_enquiry(text: str) -> EnquiryExtraction:
         if destination_tokens:
             partial["destination"] = titlecase(destination_tokens)
 
-        missing = tuple(
-            name
-            for name, value in (("product", product_tokens), ("destination", destination_tokens))
-            if not value
-        )
+        missing = tuple(name for name, value in (("product", product_tokens), ("destination", destination_tokens)) if not value)
         if missing:
             return EnquiryExtraction(missing=missing, partial=partial)
 
@@ -446,7 +527,7 @@ def classify(text: str, *, has_pending_action: bool = False, has_selection: bool
     if terse and (tokens & _CANCEL_TOKENS or _phrase_hits(normalised, _CANCEL_PHRASES)):
         return Classification(Intent.CANCEL, 0.95 if has_pending_action else 0.6)
 
-    scores: dict[Intent, float] = {intent: 0.0 for intent in Intent}
+    scores: dict[Intent, float] = dict.fromkeys(Intent, 0.0)
 
     identifier = ENQUIRY_ID.search(text)
     if identifier is not None:
@@ -556,13 +637,7 @@ def extract_search_slots(
         # supplier" -> "basmati rice".
         for index, token in enumerate(tokens):
             if token in _SUPPLIER_NOUNS and index:
-                candidate = _strip_filler(
-                    [
-                        item
-                        for item in tokens[:index]
-                        if item not in _SEARCH_TOKENS and item not in _ORDER_VERBS
-                    ]
-                )
+                candidate = _strip_filler([item for item in tokens[:index] if item not in _SEARCH_TOKENS and item not in _ORDER_VERBS])
                 if candidate:
                     product = titlecase(candidate[-3:])
                 break

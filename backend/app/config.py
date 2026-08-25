@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-
 # Loaded at import time so that every consumer of get_settings() observes the
 # same environment. app.database builds its engine during import, which happens
 # before any application entrypoint runs, so deferring this to main.py would
@@ -36,11 +35,7 @@ def get_settings() -> Settings:
         jwt_secret=os.getenv("JWT_SECRET", "local-demo-secret-change-before-deploy"),
         jwt_issuer=os.getenv("JWT_ISSUER", "tradevoice"),
         access_token_minutes=int(os.getenv("ACCESS_TOKEN_MINUTES", "60")),
-        allowed_origins=tuple(
-            origin.strip()
-            for origin in os.getenv("ALLOWED_ORIGINS", default_origins).split(",")
-            if origin.strip()
-        ),
+        allowed_origins=tuple(origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", default_origins).split(",") if origin.strip()),
         voice_mode=os.getenv("VOICE_MODE", "mock").lower(),
         public_base_url=os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
         twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN", "local-twilio-test-token"),
@@ -61,9 +56,7 @@ def validate_runtime_settings(settings: Settings) -> None:
         errors.append("JWT_SECRET must be a unique value of at least 32 characters")
     if not settings.public_base_url.startswith("https://"):
         errors.append("PUBLIC_BASE_URL must use HTTPS")
-    if not settings.allowed_origins or any(
-        not origin.startswith("https://") for origin in settings.allowed_origins
-    ):
+    if not settings.allowed_origins or any(not origin.startswith("https://") for origin in settings.allowed_origins):
         errors.append("ALLOWED_ORIGINS must contain only HTTPS origins")
     if settings.voice_mode not in {"mock", "openai"}:
         errors.append("VOICE_MODE must be mock or openai")

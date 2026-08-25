@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-
 CONTEXT = {"current_page": "distributor_directory", "selected_distributor_id": "dist_001", "buyer": {"id": "attacker"}}
 
 
@@ -51,14 +50,12 @@ def test_client_context_cannot_replace_authenticated_identity(client, auth_heade
 
 
 def test_missing_token_and_untrusted_origin_are_rejected(client):
-    with pytest.raises(WebSocketDisconnect) as missing:
-        with client.websocket_connect("/ws/voice") as websocket:
-            websocket.send_json({"context": CONTEXT})
-            websocket.receive_json()
+    with pytest.raises(WebSocketDisconnect) as missing, client.websocket_connect("/ws/voice") as websocket:
+        websocket.send_json({"context": CONTEXT})
+        websocket.receive_json()
     assert missing.value.code == 1008
-    with pytest.raises(WebSocketDisconnect) as origin:
-        with client.websocket_connect("/ws/voice", headers={"origin": "https://untrusted.example"}):
-            pass
+    with pytest.raises(WebSocketDisconnect) as origin, client.websocket_connect("/ws/voice", headers={"origin": "https://untrusted.example"}):
+        pass
     assert origin.value.code == 1008
 
 

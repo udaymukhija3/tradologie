@@ -10,11 +10,14 @@ from app.models import AuditEvent, SupportRequest, WorkspaceCounter
 from app.tools.registry import registry
 
 
-@registry.register("request_human_support", {
-    "name": "request_human_support",
-    "description": "Creates a workspace-scoped human-support request.",
-    "parameters": {"type": "OBJECT", "properties": {"reason": {"type": "STRING"}}, "required": ["reason"]},
-})
+@registry.register(
+    "request_human_support",
+    {
+        "name": "request_human_support",
+        "description": "Creates a workspace-scoped human-support request.",
+        "parameters": {"type": "OBJECT", "properties": {"reason": {"type": "STRING"}}, "required": ["reason"]},
+    },
+)
 def request_human_support(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
     db: Session | None = (context or {}).get("db")
     principal: Principal | None = (context or {}).get("principal")
@@ -31,6 +34,15 @@ def request_human_support(args: dict[str, Any], context: dict[str, Any] | None =
     request = SupportRequest(workspace_id=principal.workspace_id, user_id=principal.user_id, display_id=display_id, reason=reason, status="pending")
     db.add(request)
     db.flush()
-    db.add(AuditEvent(workspace_id=principal.workspace_id, actor_id=principal.user_id, event_type="support.requested", resource_type="support_request", resource_id=request.id, details={"display_id": request.display_id}))
+    db.add(
+        AuditEvent(
+            workspace_id=principal.workspace_id,
+            actor_id=principal.user_id,
+            event_type="support.requested",
+            resource_type="support_request",
+            resource_id=request.id,
+            details={"display_id": request.display_id},
+        )
+    )
     db.commit()
     return {"status": "success", "message": "Human support request recorded.", "support_id": request.display_id}

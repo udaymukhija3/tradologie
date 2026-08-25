@@ -9,7 +9,6 @@ from app.schemas import EnquiryCreate
 from app.services.enquiries import confirm_confirmation, consume_confirmation, prepare_confirmation
 from app.tools.registry import registry
 
-
 PRINCIPAL = Principal("user_demo_admin", "workspace_demo", "arjun@horizon.example", "Arjun Mehta", UserRole.ADMIN)
 
 

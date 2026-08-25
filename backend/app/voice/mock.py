@@ -12,9 +12,10 @@ the caller's own workspace data rather than from hardcoded demo nouns.
 """
 
 import json
+import logging
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,7 +28,6 @@ from app.tools import registry
 from app.voice import nlu
 from app.voice.nlu import Intent
 
-
 MAX_TEXT_LENGTH = 4_096
 MAX_EVENT_LENGTH = 16_384
 
@@ -36,22 +36,19 @@ MAX_EVENT_LENGTH = 16_384
 # than a clarifying question.
 MIN_ACTIONABLE_CONFIDENCE = 0.4
 
-CAPABILITIES = (
-    "I can search distributors, describe the one you have selected, check an "
-    "enquiry by its ID, raise a new enquiry once you confirm it, or put you "
-    "through to a person."
-)
+CAPABILITIES = "I can search distributors, describe the one you have selected, check an enquiry by its ID, raise a new enquiry once you confirm it, or put you through to a person."
+
+
+logger = logging.getLogger("tradevoice.voice")
 
 
 def _log(event: str, **fields: Any) -> None:
-    print(json.dumps({"event": event, **fields}, default=str), flush=True)
+    logger.info(event, extra=fields)
 
 
 def _workspace_vocabulary(db: Session, workspace_id: str) -> tuple[list[str], list[str]]:
     """Product and location vocabulary drawn from the tenant's own catalogue."""
-    rows = db.scalars(
-        select(Distributor).where(Distributor.workspace_id == workspace_id).limit(200)
-    ).all()
+    rows = db.scalars(select(Distributor).where(Distributor.workspace_id == workspace_id).limit(200)).all()
     products: set[str] = set()
     locations: set[str] = set()
     for row in rows:
@@ -68,22 +65,20 @@ def _describe(draft: nlu.EnquiryDraft) -> str:
 
 async def run_mock_session(
     websocket,
-    context: Dict[str, Any],
+    context: dict[str, Any],
     db: Session,
     principal: Principal,
 ):
     """Run the deterministic, credential-free conversational engine."""
 
     session_id = uuid.uuid4().hex
-    pending_enquiry: Optional[Dict[str, Any]] = None
-    pending_confirmation_id: Optional[str] = None
-    slots: Dict[str, Any] = {}
+    pending_enquiry: dict[str, Any] | None = None
+    pending_confirmation_id: str | None = None
+    slots: dict[str, Any] = {}
 
     products, locations = _workspace_vocabulary(db, principal.workspace_id)
 
-    await websocket.send_json(
-        {"type": "session_started", "session_id": session_id, "engine": "local_demo"}
-    )
+    await websocket.send_json({"type": "session_started", "session_id": session_id, "engine": "local_demo"})
     _log("session_started", session_id=session_id, vocabulary_products=len(products))
 
     async def send_response(text: str, request_id: str, started_at: float) -> None:
@@ -95,9 +90,7 @@ async def run_mock_session(
                 "latency_ms": latency_ms,
             }
         )
-        await websocket.send_json(
-            {"type": "agent_response", "request_id": request_id, "text": text}
-        )
+        await websocket.send_json({"type": "agent_response", "request_id": request_id, "text": text})
         _log(
             "response_completed",
             session_id=session_id,
@@ -107,16 +100,12 @@ async def run_mock_session(
 
     async def execute_tool(
         name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         request_id: str,
-        tool_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        await websocket.send_json(
-            {"type": "tool_requested", "request_id": request_id, "name": name}
-        )
-        await websocket.send_json(
-            {"type": "tool_started", "request_id": request_id, "name": name}
-        )
+        tool_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        await websocket.send_json({"type": "tool_requested", "request_id": request_id, "name": name})
+        await websocket.send_json({"type": "tool_started", "request_id": request_id, "name": name})
 
         start = time.perf_counter()
         tool = registry.get_tool(name)
@@ -168,8 +157,7 @@ async def run_mock_session(
             validated = EnquiryCreate.model_validate(arguments)
         except Exception:
             await send_response(
-                f"I could not use those details. Quantities must be a whole number "
-                f"above zero, and I support kg, tonnes and units. {CAPABILITIES}",
+                f"I could not use those details. Quantities must be a whole number above zero, and I support kg, tonnes and units. {CAPABILITIES}",
                 request_id,
                 started_at,
             )
@@ -185,8 +173,7 @@ async def run_mock_session(
             }
         )
         await send_response(
-            f"Please confirm: create an enquiry for {_describe(draft)}? "
-            "Say confirm or cancel.",
+            f"Please confirm: create an enquiry for {_describe(draft)}? Say confirm or cancel.",
             request_id,
             started_at,
         )
@@ -201,9 +188,7 @@ async def run_mock_session(
             # Production media adapters consume binary audio. The local demo
             # engine ignores it safely so media cannot terminate the session.
             if message.get("bytes") is not None:
-                await websocket.send_json(
-                    {"type": "media_ignored", "reason": "local_demo_engine"}
-                )
+                await websocket.send_json({"type": "media_ignored", "reason": "local_demo_engine"})
                 continue
 
             raw_text = message.get("text")
@@ -221,17 +206,13 @@ async def run_mock_session(
             try:
                 data = json.loads(raw_text)
             except json.JSONDecodeError:
-                await websocket.send_json(
-                    {"type": "error", "message": "Message must be valid JSON."}
-                )
+                await websocket.send_json({"type": "error", "message": "Message must be valid JSON."})
                 continue
 
             if data.get("type") == "context_update":
                 updated_context = data.get("context")
                 if not isinstance(updated_context, dict):
-                    await websocket.send_json(
-                        {"type": "error", "message": "Context must be an object."}
-                    )
+                    await websocket.send_json({"type": "error", "message": "Context must be an object."})
                     continue
 
                 context["current_page"] = str(updated_context.get("current_page", ""))[:160]
@@ -332,8 +313,7 @@ async def run_mock_session(
 
             if intent is Intent.CONFIRM:
                 await send_response(
-                    "There is no pending action to confirm. Tell me what enquiry "
-                    "you want to create first.",
+                    "There is no pending action to confirm. Tell me what enquiry you want to create first.",
                     request_id,
                     started_at,
                 )
@@ -341,9 +321,7 @@ async def run_mock_session(
 
             if intent is Intent.CANCEL and slots:
                 slots = {}
-                await send_response(
-                    "No problem, I have dropped that request.", request_id, started_at
-                )
+                await send_response("No problem, I have dropped that request.", request_id, started_at)
                 continue
 
             # ---------- multi-turn slot filling ----------
@@ -372,9 +350,7 @@ async def run_mock_session(
 
                 slots = {}
                 if draft is not None:
-                    pending_enquiry, pending_confirmation_id = await propose_enquiry(
-                        draft, request_id, started_at
-                    )
+                    pending_enquiry, pending_confirmation_id = await propose_enquiry(draft, request_id, started_at)
                     continue
 
             # ---------- intents ----------
@@ -382,17 +358,13 @@ async def run_mock_session(
             if intent is Intent.CREATE_ENQUIRY:
                 extraction = nlu.extract_enquiry(user_text)
 
-                if extraction.complete:
-                    pending_enquiry, pending_confirmation_id = await propose_enquiry(
-                        extraction.draft, request_id, started_at
-                    )
+                if extraction.draft is not None:
+                    pending_enquiry, pending_confirmation_id = await propose_enquiry(extraction.draft, request_id, started_at)
                     continue
 
                 if extraction.unsupported_unit is not None:
                     await send_response(
-                        f"I cannot raise an enquiry in {extraction.unsupported_unit}. "
-                        "Tell me the quantity in kg, tonnes or units and I will "
-                        "read the enquiry back to you.",
+                        f"I cannot raise an enquiry in {extraction.unsupported_unit}. Tell me the quantity in kg, tonnes or units and I will read the enquiry back to you.",
                         request_id,
                         started_at,
                     )
@@ -401,9 +373,7 @@ async def run_mock_session(
                 if "destination" in extraction.missing and "product" not in extraction.missing:
                     slots = {**extraction.partial, "missing": extraction.missing}
                     await send_response(
-                        f"I have {extraction.partial['quantity']} "
-                        f"{extraction.partial['unit']} of "
-                        f"{extraction.partial['product']}. Where should it be delivered?",
+                        f"I have {extraction.partial['quantity']} {extraction.partial['unit']} of {extraction.partial['product']}. Where should it be delivered?",
                         request_id,
                         started_at,
                     )
@@ -411,16 +381,13 @@ async def run_mock_session(
 
                 if "quantity" in extraction.missing or "unit" in extraction.missing:
                     await send_response(
-                        "How much do you need, and in what unit? I work in kg, "
-                        "tonnes and units.",
+                        "How much do you need, and in what unit? I work in kg, tonnes and units.",
                         request_id,
                         started_at,
                     )
                     continue
 
-                await send_response(
-                    "What product should the enquiry be for?", request_id, started_at
-                )
+                await send_response("What product should the enquiry be for?", request_id, started_at)
                 continue
 
             if intent is Intent.DESCRIBE_SELECTED:
@@ -429,8 +396,7 @@ async def run_mock_session(
                     distributor = result["distributor"]
                     categories = ", ".join(distributor["categories"])
                     await send_response(
-                        f"{distributor['name']} is a {distributor['status'].lower()} distributor "
-                        f"in {distributor['location']}. They supply {categories}.",
+                        f"{distributor['name']} is a {distributor['status'].lower()} distributor in {distributor['location']}. They supply {categories}.",
                         request_id,
                         started_at,
                     )
@@ -443,9 +409,7 @@ async def run_mock_session(
                 continue
 
             if intent is Intent.SEARCH_DISTRIBUTORS and classification.confidence >= MIN_ACTIONABLE_CONFIDENCE:
-                found = nlu.extract_search_slots(
-                    user_text, products=products, locations=locations
-                )
+                found = nlu.extract_search_slots(user_text, products=products, locations=locations)
                 result = await execute_tool(
                     "search_distributors",
                     {"product": found.product, "location": found.location},
@@ -453,23 +417,16 @@ async def run_mock_session(
                 )
                 matches = result.get("results", [])
                 if not matches:
-                    criteria = " and ".join(
-                        part for part in (found.product, found.location) if part
-                    )
+                    criteria = " and ".join(part for part in (found.product, found.location) if part)
                     await send_response(
-                        f"I could not find a distributor for {criteria}."
-                        if criteria
-                        else "I could not find a distributor matching those criteria.",
+                        f"I could not find a distributor for {criteria}." if criteria else "I could not find a distributor matching those criteria.",
                         request_id,
                         started_at,
                     )
                     continue
 
                 first = matches[0]
-                lead = (
-                    f"{first['name']} in {first['location']} is {first['status'].lower()} "
-                    f"and supplies {', '.join(first['categories'])}."
-                )
+                lead = f"{first['name']} in {first['location']} is {first['status'].lower()} and supplies {', '.join(first['categories'])}."
                 if len(matches) > 1:
                     others = ", ".join(row["name"] for row in matches[1:3])
                     lead += f" I also found {others}."
@@ -485,9 +442,7 @@ async def run_mock_session(
                 if result.get("status") == "success":
                     enquiry = result["enquiry"]
                     await send_response(
-                        f"{classification.enquiry_id} is currently {enquiry['status']}. "
-                        f"It is for {enquiry['quantity']} {enquiry['unit']} of "
-                        f"{enquiry['product']} to {enquiry['destination']}.",
+                        f"{classification.enquiry_id} is currently {enquiry['status']}. It is for {enquiry['quantity']} {enquiry['unit']} of {enquiry['product']} to {enquiry['destination']}.",
                         request_id,
                         started_at,
                     )
@@ -508,9 +463,7 @@ async def run_mock_session(
                 continue
 
             if intent is Intent.HUMAN_SUPPORT:
-                result = await execute_tool(
-                    "request_human_support", {"reason": user_text}, request_id
-                )
+                result = await execute_tool("request_human_support", {"reason": user_text}, request_id)
                 if result.get("status") == "success":
                     await send_response(
                         f"I recorded your request for human support. The reference is {result['support_id']}.",
@@ -518,15 +471,11 @@ async def run_mock_session(
                         started_at,
                     )
                 else:
-                    await send_response(
-                        "I could not record the support request.", request_id, started_at
-                    )
+                    await send_response("I could not record the support request.", request_id, started_at)
                 continue
 
             if intent is Intent.GREETING:
-                await send_response(
-                    f"Hello. {CAPABILITIES}", request_id, started_at
-                )
+                await send_response(f"Hello. {CAPABILITIES}", request_id, started_at)
                 continue
 
             await send_response(

@@ -4,6 +4,7 @@ import json
 import logging
 import signal
 import threading
+from typing import cast
 
 from redis import Redis
 
@@ -18,7 +19,6 @@ from app.services.summaries import (
     WORKER_HEARTBEAT_KEY,
     summarize_call,
 )
-
 
 configure_logging()
 logger = logging.getLogger("tradevoice.worker")
@@ -45,7 +45,6 @@ def _process_item(client: Redis, raw_item: str) -> None:
     try:
         payload = json.loads(raw_item)
         call_id = payload["call_id"]
-        attempt = int(payload.get("attempt", 0))
         with SessionLocal() as db:
             if summarize_call(db, call_id):
                 logger.info("summary_completed", extra={"call_id": call_id})
@@ -74,7 +73,7 @@ def run() -> None:
     logger.info("summary_worker_started", extra={"restored_jobs": restored})
     while not shutdown_requested.is_set():
         _heartbeat(client)
-        item = client.brpoplpush(SUMMARY_QUEUE, SUMMARY_PROCESSING_QUEUE, timeout=5)
+        item = cast("str | None", client.brpoplpush(SUMMARY_QUEUE, SUMMARY_PROCESSING_QUEUE, timeout=5))
         if item is None:
             continue
         _process_item(client, item)

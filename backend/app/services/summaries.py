@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from redis import Redis
 from sqlalchemy.orm import Session
@@ -8,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Call
-
 
 SUMMARY_QUEUE = "tradevoice:call-summaries"
 SUMMARY_PROCESSING_QUEUE = "tradevoice:call-summaries:processing"
@@ -49,16 +49,16 @@ def enqueue_summary(call_id: str) -> bool:
 def queue_depth(client: Redis | None = None) -> int | None:
     try:
         redis_client = client or Redis.from_url(get_settings().redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
-        return int(redis_client.llen(SUMMARY_QUEUE))
+        return cast(int, redis_client.llen(SUMMARY_QUEUE))
     except Exception:
         return None
 
 
 def queue_stats(client: Redis) -> dict[str, int | bool]:
     return {
-        "waiting": int(client.llen(SUMMARY_QUEUE)),
-        "processing": int(client.llen(SUMMARY_PROCESSING_QUEUE)),
-        "dead_letter": int(client.llen(SUMMARY_DEAD_LETTER_QUEUE)),
+        "waiting": cast(int, client.llen(SUMMARY_QUEUE)),
+        "processing": cast(int, client.llen(SUMMARY_PROCESSING_QUEUE)),
+        "dead_letter": cast(int, client.llen(SUMMARY_DEAD_LETTER_QUEUE)),
         "worker_available": worker_is_available(client),
     }
 

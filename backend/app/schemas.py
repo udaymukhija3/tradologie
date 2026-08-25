@@ -5,7 +5,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictInt, field_validator
 
-
 ShortText = Annotated[str, Field(min_length=1, max_length=160)]
 Phone = Annotated[str, Field(pattern=r"^\+[1-9]\d{7,14}$")]
 

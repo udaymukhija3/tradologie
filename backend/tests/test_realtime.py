@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from typing import ClassVar
 
 from app.voice import openai_realtime
-
 
 CONTEXT = {"current_page": "distributor_directory", "selected_distributor_id": "dist_001"}
 
@@ -25,6 +24,7 @@ def test_realtime_configuration_has_tools_and_bounded_sessions(monkeypatch):
 def test_missing_key_fails_closed(client, auth_headers, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     import app.main as main
+
     monkeypatch.setattr(main, "settings", replace(main.settings, voice_mode="openai"))
     response = client.post("/api/realtime/call", headers={**auth_headers, "origin": "http://localhost:5173"}, json={"sdp": "v=0\r\n", "context": CONTEXT})
     assert response.status_code == 503
@@ -32,17 +32,29 @@ def test_missing_key_fails_closed(client, auth_headers, monkeypatch):
 
 def test_realtime_call_keeps_server_key_and_binds_owner(client, auth_headers, monkeypatch):
     captured = {}
+
     class FakeResponse:
         is_success = True
         status_code = 201
         text = "v=0\r\na=answer\r\n"
-        headers = {"location": "/v1/realtime/calls/call_demo", "x-request-id": "req_demo"}
+        headers: ClassVar[dict[str, str]] = {"location": "/v1/realtime/calls/call_demo", "x-request-id": "req_demo"}
+
     class FakeClient:
-        def __init__(self, *, timeout): captured["timeout"] = timeout
-        async def __aenter__(self): return self
-        async def __aexit__(self, *_): return False
-        async def post(self, url, *, headers, files): captured.update(url=url, headers=headers, files=files); return FakeResponse()
+        def __init__(self, *, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def post(self, url, *, headers, files):
+            captured.update(url=url, headers=headers, files=files)
+            return FakeResponse()
+
     import app.main as main
+
     monkeypatch.setattr(main, "settings", replace(main.settings, voice_mode="openai"))
     monkeypatch.setenv("OPENAI_API_KEY", "server-test-key")
     monkeypatch.setattr(openai_realtime.httpx, "AsyncClient", FakeClient)
@@ -62,8 +74,10 @@ def test_confirmation_is_one_time_and_gateway_replay_is_concurrency_safe(client,
     assert proposed.json()["result"]["status"] == "confirmation_required"
     observed = client.post(f"/api/realtime/sessions/{session.session_id}/events", headers=auth_headers, json={"type": "user_transcript", "transcript": "confirm"})
     assert observed.json()["status"] == "confirmation_recorded"
+
     def create_once(_):
         return client.post(url, headers=auth_headers, json={"call_id": "create-same-call", "name": "create_enquiry", "arguments": args}).json()["result"]
+
     with ThreadPoolExecutor(max_workers=10) as pool:
         results = list(pool.map(create_once, range(10)))
     assert {result["enquiry_id"] for result in results} == {"ENQ-1004"}

@@ -5,7 +5,7 @@ import hmac
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.models import User, UserRole
-
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -41,9 +40,7 @@ def verify_password(password: str, encoded: str) -> bool:
         algorithm, rounds, salt_hex, expected_hex = encoded.split("$", 3)
         if algorithm != "pbkdf2_sha256":
             return False
-        actual = hashlib.pbkdf2_hmac(
-            "sha256", password.encode(), bytes.fromhex(salt_hex), int(rounds)
-        )
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), int(rounds))
         return hmac.compare_digest(actual.hex(), expected_hex)
     except (TypeError, ValueError):
         return False
@@ -68,7 +65,7 @@ def verify_password_or_dummy(password: str, encoded: str | None) -> bool:
 
 def create_access_token(user: User) -> str:
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "iss": settings.jwt_issuer,
         "sub": user.id,
@@ -116,4 +113,5 @@ def require_roles(*roles: UserRole):
         if principal.role not in roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient workspace role")
         return principal
+
     return dependency

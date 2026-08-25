@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -8,7 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from redis import Redis
@@ -28,8 +29,16 @@ from app.seed_data import seed_database
 from app.services.calls import CallTransitionError, advance_call, create_simulated_call
 from app.services.summaries import enqueue_summary, queue_stats
 from app.voice.mock import run_mock_session
-from app.voice.openai_realtime import DEFAULT_REALTIME_MODEL, RealtimeConfigurationError, RealtimeUpstreamError, create_openai_realtime_call, execute_realtime_tool, observe_user_transcript, session_store, update_session_context
-
+from app.voice.openai_realtime import (
+    DEFAULT_REALTIME_MODEL,
+    RealtimeConfigurationError,
+    RealtimeUpstreamError,
+    create_openai_realtime_call,
+    execute_realtime_tool,
+    observe_user_transcript,
+    session_store,
+    update_session_context,
+)
 
 configure_logging()
 logger = logging.getLogger("tradevoice.api")
@@ -49,7 +58,13 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="TradeVoice Platform", version="1.0.0", lifespan=lifespan)
 ALLOWED_ORIGINS = set(settings.allowed_origins)
-app.add_middleware(CORSMiddleware, allow_origins=sorted(ALLOWED_ORIGINS), allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Twilio-Signature", "X-Request-ID"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(ALLOWED_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Twilio-Signature", "X-Request-ID"],
+)
 
 
 class RealtimeCallRequest(BaseModel):
@@ -115,7 +130,13 @@ def _bounded_context(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _session_context(principal: Principal, page_context: dict[str, Any]) -> dict[str, Any]:
-    return {**_bounded_context(page_context), "buyer": {"id": principal.user_id, "name": principal.name}, "user_id": principal.user_id, "workspace_id": principal.workspace_id, "role": principal.role.value}
+    return {
+        **_bounded_context(page_context),
+        "buyer": {"id": principal.user_id, "name": principal.name},
+        "user_id": principal.user_id,
+        "workspace_id": principal.workspace_id,
+        "role": principal.role.value,
+    }
 
 
 def _require_owned_session(session_id: str, principal: Principal):
@@ -172,7 +193,13 @@ def metrics():
 @app.get("/api/runtime")
 def get_runtime():
     if settings.voice_mode == "openai":
-        return {"voice_mode": "openai", "engine_label": "OpenAI Realtime", "speech_transport": "webrtc", "model": os.getenv("OPENAI_REALTIME_MODEL", DEFAULT_REALTIME_MODEL), "configured": bool(os.getenv("OPENAI_API_KEY", "").strip())}
+        return {
+            "voice_mode": "openai",
+            "engine_label": "OpenAI Realtime",
+            "speech_transport": "webrtc",
+            "model": os.getenv("OPENAI_REALTIME_MODEL", DEFAULT_REALTIME_MODEL),
+            "configured": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        }
     return {"voice_mode": "mock", "engine_label": "Local Demo Engine", "speech_transport": "browser_speech"}
 
 
@@ -180,9 +207,16 @@ def get_runtime():
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     limiter.check(f"login:{request.client.host if request.client else 'unknown'}", limit=10, window_seconds=60)
     user = db.scalar(select(User).where(func.lower(User.email) == payload.email.lower(), User.is_active.is_(True)))
-    if not verify_password_or_dummy(payload.password, user.password_hash if user is not None else None):
+    # Verify first and branch after, so the unknown-account path still pays the
+    # full KDF cost while the checker can still narrow `user`.
+    verified = verify_password_or_dummy(payload.password, user.password_hash if user is not None else None)
+    if user is None or not verified:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return TokenResponse(access_token=create_access_token(user), expires_in=settings.access_token_minutes * 60, user={"id": user.id, "workspace_id": user.workspace_id, "workspace_name": user.workspace.name, "email": user.email, "name": user.name, "role": user.role.value})
+    return TokenResponse(
+        access_token=create_access_token(user),
+        expires_in=settings.access_token_minutes * 60,
+        user={"id": user.id, "workspace_id": user.workspace_id, "workspace_name": user.workspace.name, "email": user.email, "name": user.name, "role": user.role.value},
+    )
 
 
 @app.get("/api/auth/me")
@@ -221,7 +255,17 @@ def dashboard(principal: Principal = Depends(current_principal), db: Session = D
     agents = db.scalars(select(VoiceAgent).where(VoiceAgent.workspace_id == principal.workspace_id).order_by(VoiceAgent.name)).all()
     calls = db.scalars(select(Call).where(Call.workspace_id == principal.workspace_id).order_by(Call.created_at.desc()).limit(20)).all()
     enquiries = db.scalars(select(Enquiry).where(Enquiry.workspace_id == principal.workspace_id).order_by(Enquiry.created_at.desc()).limit(20)).all()
-    return {"counts": {"agents": len(agents), "calls": db.scalar(select(func.count()).select_from(Call).where(Call.workspace_id == principal.workspace_id)) or 0, "active_calls": db.scalar(select(func.count()).select_from(Call).where(Call.workspace_id == principal.workspace_id, Call.status == CallStatus.ACTIVE)) or 0, "enquiries": db.scalar(select(func.count()).select_from(Enquiry).where(Enquiry.workspace_id == principal.workspace_id)) or 0}, "agents": agents, "calls": calls, "enquiries": enquiries}
+    return {
+        "counts": {
+            "agents": len(agents),
+            "calls": db.scalar(select(func.count()).select_from(Call).where(Call.workspace_id == principal.workspace_id)) or 0,
+            "active_calls": db.scalar(select(func.count()).select_from(Call).where(Call.workspace_id == principal.workspace_id, Call.status == CallStatus.ACTIVE)) or 0,
+            "enquiries": db.scalar(select(func.count()).select_from(Enquiry).where(Enquiry.workspace_id == principal.workspace_id)) or 0,
+        },
+        "agents": agents,
+        "calls": calls,
+        "enquiries": enquiries,
+    }
 
 
 @app.post("/api/telephony/simulate", response_model=CallResponse, status_code=201)
@@ -263,7 +307,19 @@ async def twilio_event(request: Request, db: Session = Depends(get_db)):
         agent = db.scalar(select(VoiceAgent).where(VoiceAgent.id == agent_id, VoiceAgent.workspace_id == workspace_id, VoiceAgent.is_active.is_(True)))
         if owner is None or agent is None:
             raise HTTPException(status_code=404, detail="Provider destination is not configured")
-        call = Call(workspace_id=workspace_id, agent_id=agent.id, created_by_id=owner.id, provider="twilio", provider_call_id=event.provider_call_id, direction=event.direction, from_number=event.from_number, to_number=event.to_number, status=CallStatus.QUEUED, transcript="", idempotency_key=f"twilio:{event.provider_call_id}")
+        call = Call(
+            workspace_id=workspace_id,
+            agent_id=agent.id,
+            created_by_id=owner.id,
+            provider="twilio",
+            provider_call_id=event.provider_call_id,
+            direction=event.direction,
+            from_number=event.from_number,
+            to_number=event.to_number,
+            status=CallStatus.QUEUED,
+            transcript="",
+            idempotency_key=f"twilio:{event.provider_call_id}",
+        )
         db.add(call)
         try:
             db.commit()
@@ -308,7 +364,9 @@ async def create_realtime_call_route(payload: RealtimeCallRequest, request: Requ
     except RealtimeUpstreamError as exc:
         logger.warning("realtime_call_setup_failed", extra={"upstream_status": exc.status_code, "upstream_request_id": exc.request_id})
         raise HTTPException(status_code=502, detail="OpenAI realtime session setup failed") from None
-    return Response(content=answer_sdp, media_type="application/sdp", headers={"x-tradevoice-session-id": session.session_id, "cache-control": "no-store", "x-upstream-request-id": upstream_request_id or ""})
+    return Response(
+        content=answer_sdp, media_type="application/sdp", headers={"x-tradevoice-session-id": session.session_id, "cache-control": "no-store", "x-upstream-request-id": upstream_request_id or ""}
+    )
 
 
 @app.post("/api/realtime/sessions/{session_id}/tools")
@@ -334,6 +392,8 @@ def record_realtime_event(session_id: str, payload: RealtimeEventRequest, princi
 def change_realtime_context(session_id: str, payload: RealtimeContextRequest, principal: Principal = Depends(current_principal)):
     _require_owned_session(session_id, principal)
     session = update_session_context(session_id, _bounded_context(payload.context))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Realtime session was not found")
     return {"status": "updated", "selected_distributor_id": session.context.get("selected_distributor_id")}
 
 
@@ -373,12 +433,11 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
         except Exception as exc:
             logger.exception("websocket_session_failed", extra={"error_type": type(exc).__name__})
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.send_json({"type": "error", "message": "The voice session could not be initialized."})
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("app.main:app", host=os.getenv("HOST", "127.0.0.1"), port=int(os.getenv("PORT", "8000")), proxy_headers=True)

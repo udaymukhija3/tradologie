@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.auth import Principal
 from app.models import AuditEvent, Confirmation, ConfirmationStatus, Enquiry, WorkspaceCounter
 from app.schemas import EnquiryCreate
-
 
 CONFIRMATION_TTL_SECONDS = 5 * 60
 
@@ -42,7 +41,7 @@ def prepare_confirmation(
             Confirmation.status == ConfirmationStatus.PENDING,
         )
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if existing is not None and _as_utc(existing.expires_at) > now:
         return existing
     confirmation = Confirmation(
@@ -63,7 +62,7 @@ def prepare_confirmation(
 
 
 def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def confirm_confirmation(db: Session, principal: Principal, confirmation_id: str) -> Confirmation | None:
@@ -76,7 +75,7 @@ def confirm_confirmation(db: Session, principal: Principal, confirmation_id: str
     )
     if confirmation is None or confirmation.status != ConfirmationStatus.PENDING:
         return None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if _as_utc(confirmation.expires_at) <= now:
         confirmation.status = ConfirmationStatus.EXPIRED
         db.commit()
@@ -112,11 +111,13 @@ def consume_confirmation(
     data = canonical_payload(payload)
     digest = payload_hash(data)
     confirmation = db.scalar(
-        select(Confirmation).where(
+        select(Confirmation)
+        .where(
             Confirmation.id == confirmation_id,
             Confirmation.workspace_id == principal.workspace_id,
             Confirmation.user_id == principal.user_id,
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     if confirmation is None:
         return None, "confirmation_not_found"
@@ -128,7 +129,7 @@ def consume_confirmation(
     )
     if existing is not None:
         return existing, "idempotent_replay"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if confirmation.payload_hash != digest or confirmation.payload != data:
         return None, "confirmation_payload_mismatch"
     if confirmation.status != ConfirmationStatus.CONFIRMED:
@@ -161,7 +162,16 @@ def consume_confirmation(
     db.add(enquiry)
     try:
         db.flush()
-        db.add(AuditEvent(workspace_id=principal.workspace_id, actor_id=principal.user_id, event_type="enquiry.created", resource_type="enquiry", resource_id=enquiry.id, details={"display_id": enquiry.display_id, "confirmation_id": confirmation.id}))
+        db.add(
+            AuditEvent(
+                workspace_id=principal.workspace_id,
+                actor_id=principal.user_id,
+                event_type="enquiry.created",
+                resource_type="enquiry",
+                resource_id=enquiry.id,
+                details={"display_id": enquiry.display_id, "confirmation_id": confirmation.id},
+            )
+        )
         db.commit()
     except IntegrityError:
         db.rollback()

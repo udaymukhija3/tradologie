@@ -14,7 +14,15 @@ from app.providers.twilio import TwilioProvider
 
 
 def call_payload(key="call-key-0001"):
-    return {"agent_id": "agent_demo", "direction": "outbound", "from_number": "+911204000001", "to_number": "+971500000001", "transcript": "Buyer requested a basmati rice quote. Follow up tomorrow.", "outcome": "qualified_lead", "idempotency_key": key}
+    return {
+        "agent_id": "agent_demo",
+        "direction": "outbound",
+        "from_number": "+911204000001",
+        "to_number": "+971500000001",
+        "transcript": "Buyer requested a basmati rice quote. Follow up tomorrow.",
+        "outcome": "qualified_lead",
+        "idempotency_key": key,
+    }
 
 
 def test_simulated_call_lifecycle_summary_and_idempotency(client, auth_headers):
@@ -68,10 +76,7 @@ def test_migration_builds_empty_database(tmp_path):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert "workspace_counters" in tables
         unique_indexes = [row[1] for row in connection.execute("PRAGMA index_list('users')") if row[2]]
-        assert any(
-            [column[2] for column in connection.execute(f"PRAGMA index_info('{index_name}')")] == ["email"]
-            for index_name in unique_indexes
-        )
+        assert any([column[2] for column in connection.execute(f"PRAGMA index_info('{index_name}')")] == ["email"] for index_name in unique_indexes)
 
 
 def test_counter_migration_upgrades_an_existing_database(tmp_path):
@@ -119,9 +124,7 @@ def test_one_provider_event_writes_one_audit_row(client, auth_headers):
     call_id = created.json()["id"]
 
     with SessionLocal() as db:
-        events = db.scalars(
-            select(AuditEvent).where(AuditEvent.resource_id == call_id).order_by(AuditEvent.created_at)
-        ).all()
+        events = db.scalars(select(AuditEvent).where(AuditEvent.resource_id == call_id).order_by(AuditEvent.created_at)).all()
 
     # The simulator reports two states: active, then completed.
     assert [event.event_type for event in events] == ["call.active", "call.completed"]
@@ -136,9 +139,13 @@ def test_out_of_order_provider_event_is_reported_not_silently_dropped(client):
 
     def deliver(status):
         parameters = {
-            "CallSid": "CA-ooo-1", "CallStatus": status, "Direction": "inbound",
-            "From": "+971500000001", "To": "+911204000001",
-            "WorkspaceId": "workspace_demo", "AgentId": "agent_demo",
+            "CallSid": "CA-ooo-1",
+            "CallStatus": status,
+            "Direction": "inbound",
+            "From": "+971500000001",
+            "To": "+911204000001",
+            "WorkspaceId": "workspace_demo",
+            "AgentId": "agent_demo",
         }
         return client.post(
             "/api/telephony/twilio/events",
@@ -162,7 +169,9 @@ def test_unreachable_transitions_are_rejected_at_the_service_boundary():
     from app.services.calls import CallTransitionError, transition_path
 
     assert transition_path(CallStatus.QUEUED, CallStatus.COMPLETED) == [
-        CallStatus.RINGING, CallStatus.ACTIVE, CallStatus.COMPLETED,
+        CallStatus.RINGING,
+        CallStatus.ACTIVE,
+        CallStatus.COMPLETED,
     ]
     assert transition_path(CallStatus.COMPLETED, CallStatus.ACTIVE) is None
     assert issubclass(CallTransitionError, ValueError)

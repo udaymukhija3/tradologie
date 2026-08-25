@@ -14,14 +14,24 @@ def _context(context: dict[str, Any] | None) -> tuple[Session | None, str | None
 
 
 def _dump(distributor: Distributor) -> dict:
-    return {"id": distributor.id, "external_id": distributor.external_id, "name": distributor.name, "location": distributor.location, "categories": distributor.categories, "status": distributor.status}
+    return {
+        "id": distributor.id,
+        "external_id": distributor.external_id,
+        "name": distributor.name,
+        "location": distributor.location,
+        "categories": distributor.categories,
+        "status": distributor.status,
+    }
 
 
-@registry.register("get_distributor", {
-    "name": "get_distributor",
-    "description": "Returns authoritative workspace-scoped information about a distributor.",
-    "parameters": {"type": "OBJECT", "properties": {"distributor_id": {"type": "STRING"}}},
-})
+@registry.register(
+    "get_distributor",
+    {
+        "name": "get_distributor",
+        "description": "Returns authoritative workspace-scoped information about a distributor.",
+        "parameters": {"type": "OBJECT", "properties": {"distributor_id": {"type": "STRING"}}},
+    },
+)
 def get_distributor(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
     db, workspace_id = _context(context)
     if db is None or workspace_id is None:
@@ -33,11 +43,14 @@ def get_distributor(args: dict[str, Any], context: dict[str, Any] | None = None)
     return {"status": "success", "distributor": _dump(distributor)}
 
 
-@registry.register("search_distributors", {
-    "name": "search_distributors",
-    "description": "Search workspace distributors by product/category and location.",
-    "parameters": {"type": "OBJECT", "properties": {"product": {"type": "STRING"}, "location": {"type": "STRING"}}},
-})
+@registry.register(
+    "search_distributors",
+    {
+        "name": "search_distributors",
+        "description": "Search workspace distributors by product/category and location.",
+        "parameters": {"type": "OBJECT", "properties": {"product": {"type": "STRING"}, "location": {"type": "STRING"}}},
+    },
+)
 def search_distributors(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
     db, workspace_id = _context(context)
     if db is None or workspace_id is None:

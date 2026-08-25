@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ApiError, type ApiClient } from '../api';
 
 interface CallRecord {
   id: string;
@@ -15,21 +16,22 @@ interface CallRecord {
 interface AgentRecord { id: string; name: string; provider: string; voice: string; is_active: boolean }
 interface DashboardData { counts: Record<string, number>; agents: AgentRecord[]; calls: CallRecord[] }
 
-export const PlatformDashboard = ({ accessToken, refreshVersion }: { accessToken: string; refreshVersion: number }) => {
+export const PlatformDashboard = ({ api, refreshVersion }: { api: ApiClient; refreshVersion: number }) => {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
   const [simulating, setSimulating] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch('/api/dashboard', { headers: { Authorization: `Bearer ${accessToken}` } });
-      if (!response.ok) throw new Error('Dashboard request failed.');
-      setData(await response.json() as DashboardData);
+      setData(await api.get<DashboardData>('/api/dashboard'));
       setError('');
-    } catch {
+    } catch (requestError) {
+      // A 401 tears the session down at the App level; showing a panel error
+      // on top of the sign-in screen would just be noise.
+      if (requestError instanceof ApiError && requestError.status === 401) return;
       setError('Operational dashboard data is unavailable.');
     }
-  }, [accessToken]);
+  }, [api]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -42,22 +44,18 @@ export const PlatformDashboard = ({ accessToken, refreshVersion }: { accessToken
     setSimulating(true);
     setError('');
     try {
-      const response = await fetch('/api/telephony/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
-          agent_id: agent.id,
-          direction: 'outbound',
-          from_number: '+911204000001',
-          to_number: '+971500000001',
-          transcript: 'Buyer requested a verified basmati rice supplier in Punjab and asked for a follow-up quote.',
-          outcome: 'qualified_lead',
-          idempotency_key: `dashboard-${crypto.randomUUID()}`,
-        }),
+      await api.post('/api/telephony/simulate', {
+        agent_id: agent.id,
+        direction: 'outbound',
+        from_number: '+911204000001',
+        to_number: '+971500000001',
+        transcript: 'Buyer requested a verified basmati rice supplier in Punjab and asked for a follow-up quote.',
+        outcome: 'qualified_lead',
+        idempotency_key: `dashboard-${crypto.randomUUID()}`,
       });
-      if (!response.ok) throw new Error('Call simulation failed.');
       await load();
     } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) return;
       setError(requestError instanceof Error ? requestError.message : 'Call simulation failed.');
     } finally {
       setSimulating(false);

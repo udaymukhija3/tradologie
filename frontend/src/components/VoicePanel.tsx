@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { ApiError, type ApiClient } from '../api';
 import { OpenAIRealtimeClient, type RealtimeAppContext } from '../voice/openaiRealtime';
 import { BrowserSpeechAdapter, describeSelectedVoice, primeVoices, speakText, stopSpeech } from '../voice/speech';
 
 interface Props {
   context: AppContext;
-  accessToken: string;
+  api: ApiClient;
   onClose: () => void;
   onEnquiryCreated: () => void;
 }
@@ -59,7 +60,7 @@ function voiceWebSocketUrl(): string {
   return `${protocol}//${window.location.host}/ws/voice`;
 }
 
-export const VoicePanel = ({ context, accessToken, onClose, onEnquiryCreated }: Props) => {
+export const VoicePanel = ({ context, api, onClose, onEnquiryCreated }: Props) => {
   const [status, setStatus] = useState('Idle');
   const [messages, setMessages] = useState<Message[]>([]);
   const [traces, setTraces] = useState<TraceEvent[]>([]);
@@ -138,11 +139,7 @@ export const VoicePanel = ({ context, accessToken, onClose, onEnquiryCreated }: 
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/runtime', { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Runtime request failed: ${response.status}`);
-        return response.json() as Promise<RuntimeConfig>;
-      })
+    api.get<RuntimeConfig>('/api/runtime', { signal: controller.signal })
       .then((config) => {
         setRuntime(config);
         setSpeechSupported(config.voice_mode === 'openai'
@@ -150,12 +147,13 @@ export const VoicePanel = ({ context, accessToken, onClose, onEnquiryCreated }: 
           : BrowserSpeechAdapter.isSupported());
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (ApiError.isAbort(error)) return;
+        if (error instanceof ApiError && error.status === 401) return;
         addTrace('runtime_config_unavailable using_local_defaults');
       })
       .finally(() => setRuntimeLoaded(true));
     return () => controller.abort();
-  }, [addTrace]);
+  }, [addTrace, api]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -216,7 +214,7 @@ export const VoicePanel = ({ context, accessToken, onClose, onEnquiryCreated }: 
         setStatus('Error');
         addTrace(`realtime_error ${message}`);
       },
-    }, accessToken);
+    }, api.accessToken);
     realtimeRef.current = client;
     try {
       await client.connect(context);
@@ -240,7 +238,7 @@ export const VoicePanel = ({ context, accessToken, onClose, onEnquiryCreated }: 
     wsRef.current = websocket;
     websocket.onopen = () => {
       addTrace('websocket_connected');
-      websocket.send(JSON.stringify({ context, access_token: accessToken }));
+      websocket.send(JSON.stringify({ context, access_token: api.accessToken }));
     };
     websocket.onmessage = (event) => {
       if (typeof event.data !== 'string') {

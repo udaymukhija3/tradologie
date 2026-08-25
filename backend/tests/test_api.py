@@ -68,16 +68,12 @@ def test_tampered_token_is_rejected(client, auth_headers):
     header, payload, signature = token.split(".")
 
     mutated = ("B" if signature[0] != "B" else "C") + signature[1:]
-    assert client.get(
-        "/api/auth/me", headers={"Authorization": f"Bearer {header}.{payload}.{mutated}"}
-    ).status_code == 401
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {header}.{payload}.{mutated}"}).status_code == 401
 
     claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     claims["workspace_id"] = "workspace_other"
     forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
-    assert client.get(
-        "/api/auth/me", headers={"Authorization": f"Bearer {header}.{forged}.{signature}"}
-    ).status_code == 401
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {header}.{forged}.{signature}"}).status_code == 401
 
 
 def test_login_spends_equal_hashing_work_on_unknown_accounts(monkeypatch):
