@@ -48,4 +48,7 @@ def test_database_engine_and_settings_agree_on_one_url():
     """
     from app.database import engine
 
-    assert str(engine.url) == get_settings().database_url
+    # str(URL) masks the password as ***, so comparing it only holds for a
+    # credential-free URL. Rendering unmasked keeps this meaningful on
+    # PostgreSQL, which is what the deployed configuration actually uses.
+    assert engine.url.render_as_string(hide_password=False) == get_settings().database_url
