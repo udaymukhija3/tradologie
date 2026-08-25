@@ -1,5 +1,7 @@
 # TradeVoice
 
+[![Verify](https://github.com/udaymukhija3/tradologie/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/udaymukhija3/tradologie/actions/workflows/ci.yml)
+
 TradeVoice is a small working slice of a multi-tenant voice-support platform. I built it to answer a narrow question: what has to sit around a voice model before you can safely let it read business data and create records?
 
 The interesting part is the control plane rather than a scripted chatbot. A signed-in user can inspect distributors and enquiries, simulate a call, talk to the support panel, and create an enquiry only after confirming the exact details. Workspace identity comes from the server, writes are idempotent, and post-call summaries run through a Redis worker.
@@ -18,6 +20,7 @@ Carrier  -> signed lifecycle webhook -> call state machine
 
 The repository includes:
 
+- a deterministic NLU layer with intent scoring, entity grammars, and multi-turn slot filling;
 - workspace-scoped authentication and admin, agent, and viewer roles;
 - an allowlisted tool gateway with server-owned user and workspace context;
 - durable, expiring confirmations with exact-payload hashes and one-time consumption;
@@ -26,7 +29,8 @@ The repository includes:
 - health checks, worker heartbeat, low-cardinality Prometheus metrics, request IDs, structured JSON logs, and bounded inputs;
 - non-root read-only containers, a one-shot migration job, restore-tested backups, and resource limits;
 - immutable GHCR release images with SBOM/provenance attestations and weekly dependency updates;
-- a React dashboard and a Playwright test for the complete demo flow.
+- a React dashboard and Playwright tests for the demo flow and for session expiry;
+- ruff, mypy, and oxlint gating every push alongside the test suites.
 
 ## Run it locally
 
@@ -64,11 +68,27 @@ That keeps the local database and queue volumes. Use `docker compose down -v` on
 1. Sign in and look at the workspace dashboard.
 2. Click **Simulate call**. The call moves through the provider-neutral lifecycle and the worker writes its summary.
 3. Select **Eastern Grain Trading**, then open **Talk to Support**.
-4. Start the conversation and choose `I need 50 tonnes of basmati rice for Dubai.`
+4. Start the conversation. The example prompts are shortcuts, not a menu, so type your own: `We need two hundred kg of cardamom for export to Muscat` works, and so does `who sells tea in Kerala`.
 5. Notice that no enquiry is created until the exact action is read back.
 6. Send `confirm`. The new `ENQ` ID appears in both the marketplace and dashboard.
 
+Leave a detail out and the agent asks for it rather than giving up: `I need 50 tonnes of rice` gets you `Where should it be delivered?`, and answering `Dubai` completes the request.
+
 The mock flow uses the same authorization, confirmation, tool, persistence, and audit boundaries as the optional realtime adapter. It is intentionally labelled as a simulator.
+
+## The conversational engine
+
+The default engine runs without any provider credentials, so it has to earn its behaviour rather than call a model. Language understanding lives in [`backend/app/voice/nlu.py`](backend/app/voice/nlu.py), which is pure and has no database or network access; [`mock.py`](backend/app/voice/mock.py) owns the socket, the tools, and the confirmation lifecycle.
+
+It is a small NLU layer rather than a pattern match:
+
+- entities come from real grammars, so spelled-out quantities (`two hundred kg`), grouped digits (`1,000`), and twenty unit synonyms including the `MT` used in commodity trading all parse;
+- destinations survive intervening clauses and trailing politeness, so `rice for export to Dubai` yields `Dubai` and the product `Rice`, not `Export To Dubai`;
+- intent is scored on weighted evidence at token boundaries, so `personal protective equipment` cannot route to the human handoff and `yes, I need 50 tonnes of rice` is an enquiry rather than a bare confirmation;
+- below a confidence floor the engine asks instead of guessing, so `I can't find my invoice` does not run a distributor search;
+- search resolves against the tenant's own distributor categories and locations, so it is not limited to the products in the demo script.
+
+Around 60 unit tests in [`test_nlu.py`](backend/tests/test_nlu.py) cover the phrasings, including regressions for the two cases that used to write corrupted destinations. Deterministic is the point; scripted is not.
 
 ## Run the checks
 
@@ -83,7 +103,7 @@ cd frontend && npx playwright install chromium && cd ..
 Then run:
 
 ```bash
-make verify             # backend tests, lint, build, and Playwright
+make verify             # ruff, mypy, backend tests, oxlint, build, and Playwright
 make verify-postgres    # the backend suite against an isolated PostgreSQL container
 make docker-verify      # validate Compose and build the production images
 make verify-infrastructure # boot an isolated stack and prove backup recovery

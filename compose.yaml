@@ -93,6 +93,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+      # The worker imports SQLAlchemy and reclaims interrupted jobs before its
+      # first heartbeat, and each probe pays a fresh interpreter start. Without
+      # a grace period those startup probes count as failures, which is why the
+      # frontend's dependency on a healthy worker failed intermittently in CI.
+      start_period: 20s
 
   frontend:
     build: ./frontend
