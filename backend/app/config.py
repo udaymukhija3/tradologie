@@ -3,6 +3,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
+
+# Loaded at import time so that every consumer of get_settings() observes the
+# same environment. app.database builds its engine during import, which happens
+# before any application entrypoint runs, so deferring this to main.py would
+# leave the engine bound to the pre-.env DATABASE_URL.
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class Settings:

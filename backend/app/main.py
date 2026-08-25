@@ -8,7 +8,6 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -17,22 +16,21 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import Principal, create_access_token, current_principal, principal_from_token, require_roles, verify_password
+from app.auth import Principal, create_access_token, current_principal, principal_from_token, require_roles, verify_password_or_dummy
 from app.config import get_settings, validate_runtime_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import Call, CallStatus, Distributor, Enquiry, SupportRequest, User, UserRole, VoiceAgent
 from app.observability import configure_logging, observe_request, render_metrics
-from app.providers.twilio import TwilioProvider
+from app.providers import get_provider
 from app.rate_limit import limiter
 from app.schemas import CallResponse, DashboardResponse, DistributorResponse, EnquiryResponse, LoginRequest, SimulatedCallRequest, TokenResponse, VoiceAgentResponse
 from app.seed_data import seed_database
-from app.services.calls import advance_call, create_simulated_call
+from app.services.calls import CallTransitionError, advance_call, create_simulated_call
 from app.services.summaries import enqueue_summary, queue_stats
 from app.voice.mock import run_mock_session
 from app.voice.openai_realtime import DEFAULT_REALTIME_MODEL, RealtimeConfigurationError, RealtimeUpstreamError, create_openai_realtime_call, execute_realtime_tool, observe_user_transcript, session_store, update_session_context
 
 
-load_dotenv()
 configure_logging()
 logger = logging.getLogger("tradevoice.api")
 settings = get_settings()
@@ -182,7 +180,7 @@ def get_runtime():
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     limiter.check(f"login:{request.client.host if request.client else 'unknown'}", limit=10, window_seconds=60)
     user = db.scalar(select(User).where(func.lower(User.email) == payload.email.lower(), User.is_active.is_(True)))
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if not verify_password_or_dummy(payload.password, user.password_hash if user is not None else None):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return TokenResponse(access_token=create_access_token(user), expires_in=settings.access_token_minutes * 60, user={"id": user.id, "workspace_id": user.workspace_id, "workspace_name": user.workspace.name, "email": user.email, "name": user.name, "role": user.role.value})
 
@@ -246,7 +244,9 @@ async def twilio_event(request: Request, db: Session = Depends(get_db)):
     if not settings.twilio_auth_token:
         raise HTTPException(status_code=503, detail="Telephony provider is not configured")
     parameters = {key: str(value) for key, value in (await request.form()).items()}
-    provider = TwilioProvider(settings.twilio_auth_token)
+    provider = get_provider("twilio", settings.twilio_auth_token)
+    if provider is None:
+        raise HTTPException(status_code=501, detail="Telephony provider is not supported")
     signature = request.headers.get("x-twilio-signature", "")
     url = f"{settings.public_base_url}/api/telephony/twilio/events"
     if not provider.verify_signature(url, parameters, signature):
@@ -273,7 +273,23 @@ async def twilio_event(request: Request, db: Session = Depends(get_db)):
             call = db.scalar(select(Call).where(Call.provider == "twilio", Call.provider_call_id == event.provider_call_id))
             if call is None:
                 raise
-    call = advance_call(db, call, event.status)
+    try:
+        call = advance_call(db, call, event.status)
+    except CallTransitionError as exc:
+        # Carriers retry and reorder. Acknowledge with 2xx so the provider stops
+        # redelivering, but report that nothing was applied rather than echoing
+        # a status change that did not happen.
+        logger.warning(
+            "provider_event_ignored",
+            extra={"call_id": call.id, "from_status": exc.current.value, "reported_status": exc.target.value},
+        )
+        return {
+            "status": "ignored",
+            "reason": "out_of_order_event",
+            "call_id": call.id,
+            "call_status": call.status.value,
+            "reported_status": exc.target.value,
+        }
     if call.status in {CallStatus.COMPLETED, CallStatus.FAILED}:
         enqueue_summary(call.id)
     return {"status": "accepted", "call_id": call.id, "call_status": call.status.value}

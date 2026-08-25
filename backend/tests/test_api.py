@@ -1,3 +1,7 @@
+import base64
+import json
+
+
 def test_liveness_readiness_and_runtime(client):
     live = client.get("/api/health/live")
     assert live.status_code == 200
@@ -53,6 +57,48 @@ def test_dashboard_is_workspace_scoped(client, auth_headers):
 
 
 def test_tampered_token_is_rejected(client, auth_headers):
+    """Both a mutated signature and forged claims must be refused.
+
+    Mutating only the final signature character is not a reliable tamper: the
+    last base64url character of an HS256 signature carries four significant
+    bits, so a fixed substitution decodes to the same 32 bytes roughly one time
+    in sixteen and the token still verifies.
+    """
     token = auth_headers["Authorization"].removeprefix("Bearer ")
-    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token[:-1]}x"})
-    assert response.status_code == 401
+    header, payload, signature = token.split(".")
+
+    mutated = ("B" if signature[0] != "B" else "C") + signature[1:]
+    assert client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {header}.{payload}.{mutated}"}
+    ).status_code == 401
+
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    claims["workspace_id"] = "workspace_other"
+    forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    assert client.get(
+        "/api/auth/me", headers={"Authorization": f"Bearer {header}.{forged}.{signature}"}
+    ).status_code == 401
+
+
+def test_login_spends_equal_hashing_work_on_unknown_accounts(monkeypatch):
+    """A missing account must not skip the KDF, or 401 latency leaks existence."""
+    from app import auth
+
+    stored = auth.hash_password("real-password")
+
+    calls = []
+    real = auth.hashlib.pbkdf2_hmac
+    monkeypatch.setattr(
+        auth.hashlib,
+        "pbkdf2_hmac",
+        lambda *args, **kwargs: calls.append(args[0]) or real(*args, **kwargs),
+    )
+
+    assert auth.verify_password_or_dummy("wrong-password", stored) is False
+    wrong_password = len(calls)
+
+    calls.clear()
+    assert auth.verify_password_or_dummy("wrong-password", None) is False
+    unknown_account = len(calls)
+
+    assert wrong_password == unknown_account == 1

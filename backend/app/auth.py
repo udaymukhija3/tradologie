@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -46,6 +47,23 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual.hex(), expected_hex)
     except (TypeError, ValueError):
         return False
+
+
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
+
+
+def verify_password_or_dummy(password: str, encoded: str | None) -> bool:
+    """Verify a password, spending equal work when the account does not exist.
+
+    Skipping the KDF for an unknown email makes a miss roughly twenty times
+    faster than a wrong password, which turns a deliberately generic 401 into a
+    reliable account-enumeration oracle. Hashing against a throwaway digest with
+    identical cost parameters keeps login latency independent of existence.
+    """
+    if encoded is None:
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        return False
+    return verify_password(password, encoded)
 
 
 def create_access_token(user: User) -> str:

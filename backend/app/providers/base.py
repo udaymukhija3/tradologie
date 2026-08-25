@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from app.models import CallStatus
 
@@ -15,6 +15,7 @@ class ProviderCallEvent:
     to_number: str
 
 
+@runtime_checkable
 class TelephonyProvider(Protocol):
     name: str
     def verify_signature(self, url: str, parameters: dict[str, str], signature: str) -> bool: ...
