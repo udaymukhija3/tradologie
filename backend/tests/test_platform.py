@@ -7,6 +7,8 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.config import get_settings
 from app.providers.twilio import TwilioProvider
 
@@ -105,3 +107,62 @@ def test_counter_migration_upgrades_an_existing_database(tmp_path):
             "SELECT enquiry_next, support_next FROM workspace_counters WHERE workspace_id = ?",
             ("existing_workspace",),
         ).fetchone() == (1001, 1001)
+
+
+def test_one_provider_event_writes_one_audit_row(client, auth_headers):
+    """Inferred intermediate states must not appear as observed events."""
+    from app.database import SessionLocal
+    from app.models import AuditEvent
+
+    created = client.post("/api/telephony/simulate", headers=auth_headers, json=call_payload("audit-key-0001"))
+    assert created.status_code == 201
+    call_id = created.json()["id"]
+
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(AuditEvent).where(AuditEvent.resource_id == call_id).order_by(AuditEvent.created_at)
+        ).all()
+
+    # The simulator reports two states: active, then completed.
+    assert [event.event_type for event in events] == ["call.active", "call.completed"]
+    assert events[0].details["inferred_states"] == ["ringing"]
+    assert "inferred_states" not in events[1].details
+
+
+def test_out_of_order_provider_event_is_reported_not_silently_dropped(client):
+    settings = get_settings()
+    provider = TwilioProvider(settings.twilio_auth_token)
+    url = f"{settings.public_base_url}/api/telephony/twilio/events"
+
+    def deliver(status):
+        parameters = {
+            "CallSid": "CA-ooo-1", "CallStatus": status, "Direction": "inbound",
+            "From": "+971500000001", "To": "+911204000001",
+            "WorkspaceId": "workspace_demo", "AgentId": "agent_demo",
+        }
+        return client.post(
+            "/api/telephony/twilio/events",
+            data=parameters,
+            headers={"X-Twilio-Signature": provider.signature(url, parameters)},
+        )
+
+    assert deliver("completed").json()["call_status"] == "completed"
+
+    replayed = deliver("in-progress")
+    assert replayed.status_code == 200, "carriers retry on non-2xx"
+    body = replayed.json()
+    assert body["status"] == "ignored"
+    assert body["reason"] == "out_of_order_event"
+    assert body["call_status"] == "completed"
+    assert body["reported_status"] == "active"
+
+
+def test_unreachable_transitions_are_rejected_at_the_service_boundary():
+    from app.models import CallStatus
+    from app.services.calls import CallTransitionError, transition_path
+
+    assert transition_path(CallStatus.QUEUED, CallStatus.COMPLETED) == [
+        CallStatus.RINGING, CallStatus.ACTIVE, CallStatus.COMPLETED,
+    ]
+    assert transition_path(CallStatus.COMPLETED, CallStatus.ACTIVE) is None
+    assert issubclass(CallTransitionError, ValueError)

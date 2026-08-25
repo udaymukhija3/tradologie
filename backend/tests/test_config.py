@@ -37,3 +37,15 @@ def test_valid_production_configuration_passes_fast_fail_validation():
     )
 
     validate_runtime_settings(safe)
+
+
+def test_database_engine_and_settings_agree_on_one_url():
+    """.env must be loaded before app.database builds its engine.
+
+    Loading dotenv in an application entrypoint is too late: importing
+    app.database constructs the engine during import, so the engine would bind
+    to the pre-.env URL while settings reported the post-.env one.
+    """
+    from app.database import engine
+
+    assert str(engine.url) == get_settings().database_url
