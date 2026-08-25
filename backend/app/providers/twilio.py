@@ -7,7 +7,6 @@ import hmac
 from app.models import CallStatus
 from app.providers.base import ProviderCallEvent
 
-
 TWILIO_STATUS = {
     "queued": CallStatus.QUEUED,
     "initiated": CallStatus.QUEUED,

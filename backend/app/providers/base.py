@@ -18,5 +18,6 @@ class ProviderCallEvent:
 @runtime_checkable
 class TelephonyProvider(Protocol):
     name: str
+
     def verify_signature(self, url: str, parameters: dict[str, str], signature: str) -> bool: ...
     def parse_event(self, parameters: dict[str, str]) -> ProviderCallEvent: ...

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.auth import Principal
 from app.models import AuditEvent, Call, CallStatus, VoiceAgent
 from app.schemas import SimulatedCallRequest
-
 
 TERMINAL_STATUSES = {CallStatus.COMPLETED, CallStatus.FAILED}
 ALLOWED_TRANSITIONS = {
@@ -51,7 +50,7 @@ def transition_path(current: CallStatus, target: CallStatus) -> list[CallStatus]
     """
     if current == target:
         return []
-    queue = deque([(current, [])])
+    queue: deque[tuple[CallStatus, list[CallStatus]]] = deque([(current, [])])
     seen = {current}
     while queue:
         node, path = queue.popleft()
@@ -59,7 +58,7 @@ def transition_path(current: CallStatus, target: CallStatus) -> list[CallStatus]
             if candidate in seen:
                 continue
             seen.add(candidate)
-            route = path + [candidate]
+            route = [*path, candidate]
             if candidate == target:
                 return route
             queue.append((candidate, route))
@@ -73,7 +72,20 @@ def create_simulated_call(db: Session, principal: Principal, payload: SimulatedC
     agent = db.scalar(select(VoiceAgent).where(VoiceAgent.id == payload.agent_id, VoiceAgent.workspace_id == principal.workspace_id, VoiceAgent.is_active.is_(True)))
     if agent is None:
         raise ValueError("Voice agent was not found in this workspace")
-    call = Call(workspace_id=principal.workspace_id, agent_id=agent.id, created_by_id=principal.user_id, provider="simulator", provider_call_id=f"SIM-{uuid.uuid4().hex[:12]}", direction=payload.direction, from_number=payload.from_number, to_number=payload.to_number, status=CallStatus.QUEUED, transcript=payload.transcript, outcome=payload.outcome, idempotency_key=payload.idempotency_key)
+    call = Call(
+        workspace_id=principal.workspace_id,
+        agent_id=agent.id,
+        created_by_id=principal.user_id,
+        provider="simulator",
+        provider_call_id=f"SIM-{uuid.uuid4().hex[:12]}",
+        direction=payload.direction,
+        from_number=payload.from_number,
+        to_number=payload.to_number,
+        status=CallStatus.QUEUED,
+        transcript=payload.transcript,
+        outcome=payload.outcome,
+        idempotency_key=payload.idempotency_key,
+    )
     db.add(call)
     try:
         db.commit()
@@ -115,7 +127,7 @@ def advance_call(
     if route is None:
         raise CallTransitionError(call.status, target)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     origin = call.status
     for step in route:
         call.status = step

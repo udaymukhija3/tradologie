@@ -1,4 +1,4 @@
-.PHONY: install migrate seed verify-core verify verify-postgres verify-infrastructure backup verify-backup backend frontend docker-up docker-down docker-verify
+.PHONY: install lint typecheck migrate seed verify-core verify verify-postgres verify-infrastructure backup verify-backup backend frontend docker-up docker-down docker-verify
 
 PYTHON ?= python3.12
 
@@ -13,7 +13,14 @@ migrate:
 seed:
 	cd backend && venv/bin/python -m app.seed
 
-verify-core:
+lint:
+	cd backend && venv/bin/ruff check .
+	cd backend && venv/bin/ruff format --check .
+
+typecheck:
+	cd backend && venv/bin/mypy
+
+verify-core: lint typecheck
 	cd backend && venv/bin/python -m pytest -q
 	cd frontend && npm run lint
 	cd frontend && npm run build

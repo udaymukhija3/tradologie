@@ -26,7 +26,6 @@ from app.schemas import EnquiryCreate
 from app.services.enquiries import cancel_confirmation, confirm_confirmation, prepare_confirmation
 from app.tools import registry
 
-
 OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls"
 DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1"
 DEFAULT_REALTIME_VOICE = "marin"
@@ -76,11 +75,7 @@ class RealtimeSessionStore:
         self._lock = threading.Lock()
 
     def _prune_locked(self, now: float) -> None:
-        expired = [
-            session_id
-            for session_id, session in self._sessions.items()
-            if now - session.last_seen_at > self.ttl_seconds
-        ]
+        expired = [session_id for session_id, session in self._sessions.items() if now - session.last_seen_at > self.ttl_seconds]
         for session_id in expired:
             self._sessions.pop(session_id, None)
         while len(self._sessions) >= self.max_sessions:
@@ -133,10 +128,7 @@ def _lowercase_json_schema(value: Any) -> Any:
 
 
 def realtime_tool_definitions() -> list[dict[str, Any]]:
-    return [
-        {"type": "function", **_lowercase_json_schema(schema)}
-        for schema in registry.get_schemas()
-    ]
+    return [{"type": "function", **_lowercase_json_schema(schema)} for schema in registry.get_schemas()]
 
 
 def _context_summary(context: dict[str, Any]) -> str:
@@ -301,7 +293,7 @@ def execute_realtime_tool(
             return session.completed_calls[call_id], 0.0
         tool = registry.get_tool(name)
         if tool is None:
-            result = {"status": "error", "message": "Tool is not registered."}
+            result: dict[str, Any] = {"status": "error", "message": "Tool is not registered."}
             session.completed_calls[call_id] = result
             return result, 0.0
         started_at = time.perf_counter()
@@ -309,8 +301,8 @@ def execute_realtime_tool(
         safe_arguments = dict(arguments)
         if name == "create_enquiry":
             normalised, validation_error = _normalise_enquiry_arguments(safe_arguments)
-            if validation_error is not None:
-                result = validation_error
+            if normalised is None:
+                result = validation_error or {"status": "invalid_request", "message": "The enquiry details were invalid."}
             elif session.pending_enquiry is None or session.pending_enquiry.arguments != normalised:
                 confirmation = prepare_confirmation(db, principal, session_id, EnquiryCreate.model_validate(normalised))
                 session.pending_enquiry = PendingEnquiry(arguments=normalised, confirmation_id=confirmation.id)

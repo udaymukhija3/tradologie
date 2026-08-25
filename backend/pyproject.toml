@@ -1,0 +1,46 @@
+[tool.ruff]
+line-length = 200
+target-version = "py312"
+extend-exclude = ["venv", "alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+  "F",    # pyflakes: unused imports, undefined names, dead locals
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "I",    # import ordering
+  "UP",   # pyupgrade
+  "B",    # bugbear: real correctness traps
+  "C4",   # comprehension misuse
+  "SIM",  # simplifiable constructs
+  "T20",  # print() left in application code
+  "RUF",
+]
+ignore = [
+  # FastAPI's dependency injection is expressed as call-in-default-argument.
+  "B008",
+  # str+Enum and StrEnum differ in __str__; the wire format depends on it.
+  "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may shadow builtins and use assert-heavy patterns freely.
+"tests/*" = ["B011"]
+# conftest must set environment variables before app modules import.
+"tests/conftest.py" = ["E402"]
+# Model instructions are prose sent upstream verbatim; wrapping the source
+# would insert newlines into the prompt itself.
+"app/voice/openai_realtime.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+mypy_path = "."
+explicit_package_bases = true
+namespace_packages = true
+exclude = "^(venv|alembic)/"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true

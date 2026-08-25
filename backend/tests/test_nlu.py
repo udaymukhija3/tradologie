@@ -5,7 +5,6 @@ import pytest
 from app.voice import nlu
 from app.voice.nlu import Intent
 
-
 # Workspace vocabulary stands in for the seeded tenant catalogue.
 PRODUCTS = ["Basmati Rice", "Rice", "Wheat", "Pulses", "Spices", "Tea", "Coffee", "Soybean"]
 LOCATIONS = ["Punjab", "West Bengal", "Gujarat", "Kerala", "Madhya Pradesh"]
@@ -34,7 +33,7 @@ def test_number_words_and_digit_groups_parse(text, expected):
 
 
 def test_and_does_not_bridge_into_a_product_list():
-    """"rice and wheat" must not be read as a continuing number."""
+    """ "rice and wheat" must not be read as a continuing number."""
     tokens = nlu.tokenise("two rice and wheat")
     value, consumed = nlu.parse_number(tokens)
     assert (value, consumed) == (2, 1)
@@ -179,7 +178,7 @@ def test_terse_confirmation_is_recognised():
 
 
 def test_incidental_verb_does_not_reach_actionable_confidence():
-    """"find" alone should not fire a distributor search."""
+    """ "find" alone should not fire a distributor search."""
     result = nlu.classify("I can't find my invoice")
     assert result.confidence < 0.4
 
@@ -218,7 +217,5 @@ def test_search_is_not_limited_to_the_demo_vocabulary():
 
 
 def test_unknown_product_falls_back_to_the_phrase_before_the_supplier_noun():
-    slots = nlu.extract_search_slots(
-        "find me a dragon fruit supplier", products=PRODUCTS, locations=LOCATIONS
-    )
+    slots = nlu.extract_search_slots("find me a dragon fruit supplier", products=PRODUCTS, locations=LOCATIONS)
     assert slots.product == "Dragon Fruit"

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
@@ -23,7 +22,7 @@ from app.database import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def new_id() -> str:
@@ -128,8 +127,8 @@ class Confirmation(Base):
     status: Mapped[ConfirmationStatus] = mapped_column(Enum(ConfirmationStatus), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -151,7 +150,7 @@ class Enquiry(Base):
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     destination: Mapped[str] = mapped_column(String(160), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
-    distributor_id: Mapped[Optional[str]] = mapped_column(ForeignKey("distributors.id", ondelete="SET NULL"))
+    distributor_id: Mapped[str | None] = mapped_column(ForeignKey("distributors.id", ondelete="SET NULL"))
     confirmation_id: Mapped[str] = mapped_column(ForeignKey("confirmations.id", ondelete="RESTRICT"), unique=True)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -189,11 +188,11 @@ class Call(Base):
     to_number: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[CallStatus] = mapped_column(Enum(CallStatus), nullable=False)
     transcript: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    summary: Mapped[Optional[str]] = mapped_column(Text)
-    outcome: Mapped[Optional[str]] = mapped_column(String(80))
+    summary: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[str | None] = mapped_column(String(80))
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -203,7 +202,7 @@ class AuditEvent(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
-    actor_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     resource_type: Mapped[str] = mapped_column(String(80), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(64), nullable=False)

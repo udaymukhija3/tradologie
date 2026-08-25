@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ApiError, type ApiClient } from '../api';
 import type { AuthUser } from './Login';
 
 export interface Distributor {
@@ -20,14 +21,14 @@ interface Enquiry {
 }
 
 interface Props {
-  accessToken: string;
+  api: ApiClient;
   user: AuthUser;
   selectedId: string | null;
   onSelect: (id: string) => void;
   enquiryRefreshVersion: number;
 }
 
-export const Marketplace: React.FC<Props> = ({ accessToken, user, selectedId, onSelect, enquiryRefreshVersion }) => {
+export const Marketplace: React.FC<Props> = ({ api, user, selectedId, onSelect, enquiryRefreshVersion }) => {
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -35,30 +36,26 @@ export const Marketplace: React.FC<Props> = ({ accessToken, user, selectedId, on
 
   useEffect(() => {
     const controller = new AbortController();
+    const signal = controller.signal;
+
     Promise.all([
-      fetch('/api/distributors', { signal: controller.signal, headers: { Authorization: `Bearer ${accessToken}` } }),
-      fetch('/api/enquiries', { signal: controller.signal, headers: { Authorization: `Bearer ${accessToken}` } }),
+      api.get<Distributor[]>('/api/distributors', { signal }),
+      api.get<Enquiry[]>('/api/enquiries', { signal }),
     ])
-      .then(async ([distributorResponse, enquiryResponse]) => {
-        if (!distributorResponse.ok || !enquiryResponse.ok) {
-          throw new Error('Marketplace data request failed.');
-        }
-        const [distributorData, enquiryData] = await Promise.all([
-          distributorResponse.json() as Promise<Distributor[]>,
-          enquiryResponse.json() as Promise<Enquiry[]>,
-        ]);
+      .then(([distributorData, enquiryData]) => {
         setDistributors(distributorData);
         setEnquiries(enquiryData);
         setError('');
       })
       .catch((requestError: unknown) => {
-        if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+        if (ApiError.isAbort(requestError)) return;
+        if (requestError instanceof ApiError && requestError.status === 401) return;
         setError('TradeVoice could not load marketplace data. Confirm that the backend is running.');
       })
       .finally(() => setIsLoading(false));
 
     return () => controller.abort();
-  }, [accessToken, enquiryRefreshVersion]);
+  }, [api, enquiryRefreshVersion]);
 
   return (
     <div className="marketplace">

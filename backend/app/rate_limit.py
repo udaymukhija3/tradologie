@@ -6,7 +6,6 @@ from collections import defaultdict, deque
 
 from fastapi import HTTPException
 
-
 # Draining expired timestamps leaves the key itself behind, so a process that
 # has seen many distinct keys (one per realtime session id, one per client
 # address) grows a dict entry per key for the lifetime of the process. Sweeping
@@ -27,11 +26,7 @@ class SlidingWindowLimiter:
         self._last_sweep = now
         # A key whose newest event predates the widest window ever used cannot
         # be limiting anything, whatever window its next caller asks for.
-        stale = [
-            key
-            for key, events in self._events.items()
-            if not events or now - events[-1] >= self._widest_window
-        ]
+        stale = [key for key, events in self._events.items() if not events or now - events[-1] >= self._widest_window]
         for key in stale:
             del self._events[key]
 

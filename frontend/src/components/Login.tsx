@@ -15,7 +15,7 @@ export interface AuthSession {
   user: AuthUser;
 }
 
-export const Login = ({ onAuthenticated }: { onAuthenticated: (session: AuthSession) => void }) => {
+export const Login = ({ onAuthenticated, notice = '' }: { onAuthenticated: (session: AuthSession) => void; notice?: string }) => {
   const [email, setEmail] = useState('arjun@horizon.example');
   const [password, setPassword] = useState('TradeVoice123!');
   const [error, setError] = useState('');
@@ -64,7 +64,8 @@ export const Login = ({ onAuthenticated }: { onAuthenticated: (session: AuthSess
           <p>The fictional demo account is already filled in. Sign in and run the five-minute flow.</p>
           <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" required /></label>
           <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" minLength={8} required /></label>
-          {error && <div className="data-state error-state" role="alert">{error}</div>}
+          {notice && !error && <div className="data-state" role="status">{notice}</div>}
+        {error && <div className="data-state error-state" role="alert">{error}</div>}
           <button className="btn btn-primary" type="submit" disabled={loading}>{loading ? 'Signing in…' : 'Open demo workspace'}</button>
           <small>No real customer data or paid provider credentials are used.</small>
         </form>
