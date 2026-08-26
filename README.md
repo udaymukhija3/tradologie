@@ -34,34 +34,42 @@ The repository includes:
 
 ## Run it locally
 
-The easiest path is Docker Desktop with Compose v2:
+Requires Docker Desktop with Compose v2. Nothing else.
 
 ```bash
+git clone https://github.com/udaymukhija3/tradologie.git
+cd tradologie
 docker compose up --build -d
-docker compose ps
+```
+
+The first build takes a few minutes. When it finishes, confirm the stack is healthy:
+
+```bash
 curl -fsS http://127.0.0.1:8080/api/health/ready
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080). The fictional demo account is prefilled, or you can enter:
+```json
+{"status":"ready","database":"ok","redis":"ok","summary_worker":"ok","summary_queue_depth":0,"summary_processing_depth":0,"summary_dead_letter_depth":0}
+```
+
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) and press **Open demo workspace**. The demo account is prefilled:
 
 ```text
 arjun@horizon.example
 TradeVoice123!
 ```
 
-The readiness response should report PostgreSQL, Redis, and the summary worker as healthy:
+If port 8080 is taken, publish on another one. `APP_PORT` also drives the WebSocket origin allowlist, so pass it to every compose command in the session:
 
-```json
-{"status":"ready","database":"ok","redis":"ok","summary_worker":"ok","summary_queue_depth":0,"summary_processing_depth":0,"summary_dead_letter_depth":0}
+```bash
+APP_PORT=8081 docker compose up --build -d
 ```
 
-When you are finished:
+Stop the stack when you are done. This keeps the database and queue volumes; add `-v` to erase the demo data:
 
 ```bash
 docker compose down
 ```
-
-That keeps the local database and queue volumes. Use `docker compose down -v` only when you intentionally want to erase the demo data and start over.
 
 ## Try the main flow
 
