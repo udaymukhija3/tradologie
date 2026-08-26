@@ -39,8 +39,11 @@ services:
       DATABASE_URL: postgresql+psycopg://tradevoice:tradevoice-local@postgres:5432/tradevoice
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: local-compose-secret-replace-in-hosting
-      ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
-      PUBLIC_BASE_URL: http://localhost:8080
+      # Must track the published port: the WebSocket handshake is rejected when
+      # the browser's Origin is not on this list, so hardcoding 8080 breaks the
+      # voice panel for anyone who overrides APP_PORT.
+      ALLOWED_ORIGINS: http://localhost:${APP_PORT:-8080},http://127.0.0.1:${APP_PORT:-8080}
+      PUBLIC_BASE_URL: http://localhost:${APP_PORT:-8080}
       VOICE_MODE: ${VOICE_MODE:-mock}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}
