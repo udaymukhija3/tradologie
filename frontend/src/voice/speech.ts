@@ -50,14 +50,29 @@ export class BrowserSpeechAdapter {
   private recognition: RecognitionInstance | null = null;
   private listening = false;
 
-  constructor(callbacks: SpeechCallbacks, language = 'en-IN') {
+  private finalParts: string[] = [];
+  private turnTimer: number | null = null;
+
+  /**
+   * @param endOfTurnMs silence after the last recognised audio before the turn
+   *   is considered finished. The Web Speech API marks a result final at the
+   *   first pause it detects, which inside a sentence is a breath rather than
+   *   an end of turn, so submitting on that flag alone cuts speakers off.
+   */
+  private endOfTurnMs: number;
+
+  constructor(callbacks: SpeechCallbacks, language = 'en-IN', endOfTurnMs = 1500) {
+    this.endOfTurnMs = endOfTurnMs;
+
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
       return;
     }
 
     this.recognition = new Recognition();
-    this.recognition.continuous = false;
+    // Keep the session open across pauses; end-of-turn is decided by the
+    // silence timer below, not by the first final result.
+    this.recognition.continuous = true;
     this.recognition.interimResults = true;
     this.recognition.lang = language;
     this.recognition.onstart = () => {
@@ -78,9 +93,19 @@ export class BrowserSpeechAdapter {
       }
 
       callbacks.onInterim(interim.trim());
-      if (finalParts.length > 0) {
-        callbacks.onFinal(finalParts.join(' '));
-      }
+      if (finalParts.length > 0) this.finalParts.push(...finalParts);
+
+      // Any recognised audio, interim or final, restarts the clock.
+      if (this.turnTimer !== null) window.clearTimeout(this.turnTimer);
+      this.turnTimer = window.setTimeout(() => {
+        this.turnTimer = null;
+        const spoken = this.finalParts.join(' ').trim();
+        this.finalParts = [];
+        if (spoken) {
+          callbacks.onFinal(spoken);
+          this.recognition?.stop();
+        }
+      }, this.endOfTurnMs);
     };
     this.recognition.onerror = (event) => {
       const friendly = event.error === 'not-allowed'
@@ -90,6 +115,14 @@ export class BrowserSpeechAdapter {
     };
     this.recognition.onend = () => {
       this.listening = false;
+      if (this.turnTimer !== null) {
+        window.clearTimeout(this.turnTimer);
+        this.turnTimer = null;
+      }
+      // Flush anything captured before the browser closed the session itself.
+      const spoken = this.finalParts.join(' ').trim();
+      this.finalParts = [];
+      if (spoken) callbacks.onFinal(spoken);
       callbacks.onEnd();
     };
   }
@@ -114,6 +147,11 @@ export class BrowserSpeechAdapter {
   }
 
   close(): void {
+    if (this.turnTimer !== null) {
+      window.clearTimeout(this.turnTimer);
+      this.turnTimer = null;
+    }
+    this.finalParts = [];
     this.recognition?.abort();
     this.listening = false;
   }

@@ -72,6 +72,8 @@ export const VoicePanel = ({ context, api, onClose, onEnquiryCreated }: Props) =
   const [runtimeLoaded, setRuntimeLoaded] = useState(false);
   const [lastError, setLastError] = useState('');
   const [speechSupported, setSpeechSupported] = useState(() => BrowserSpeechAdapter.isSupported());
+  // How long a speaker may pause mid-sentence before the turn is submitted.
+  const [endOfTurnMs, setEndOfTurnMs] = useState(1500);
   const [runtime, setRuntime] = useState<RuntimeConfig>({
     voice_mode: 'mock',
     engine_label: 'Local Demo Engine',
@@ -385,7 +387,7 @@ export const VoicePanel = ({ context, api, onClose, onEnquiryCreated }: Props) =
         addTrace('microphone_stopped');
         if (!voiceSubmittedRef.current) setStatus('Ready');
       },
-    });
+    }, 'en-IN', endOfTurnMs);
     speechRef.current = adapter;
     try {
       adapter.start();
@@ -507,6 +509,20 @@ export const VoicePanel = ({ context, api, onClose, onEnquiryCreated }: Props) =
         <div>Context: {context.selected_distributor_id || 'None selected'}</div>
         <div>Engine: {runtime.voice_mode}</div>
         <div>Transport: {runtime.speech_transport}</div>
+        {runtime.speech_transport === 'browser_speech' && (
+          <label className="trace-control">
+            Pause allowed mid-sentence: {(endOfTurnMs / 1000).toFixed(1)}s
+            <input
+              type="range"
+              min={500}
+              max={4000}
+              step={250}
+              value={endOfTurnMs}
+              onChange={(event) => setEndOfTurnMs(Number(event.target.value))}
+              disabled={isListening}
+            />
+          </label>
+        )}
         {runtime.speech_transport === 'browser_speech' && (
           <div>Voice: {describeSelectedVoice()}</div>
         )}
