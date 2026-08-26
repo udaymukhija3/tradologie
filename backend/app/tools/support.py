@@ -15,7 +15,7 @@ from app.tools.registry import registry
     {
         "name": "request_human_support",
         "description": "Creates a workspace-scoped human-support request.",
-        "parameters": {"type": "OBJECT", "properties": {"reason": {"type": "STRING"}}, "required": ["reason"]},
+        "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]},
     },
 )
 def request_human_support(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:

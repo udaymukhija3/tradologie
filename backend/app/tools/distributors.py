@@ -29,7 +29,7 @@ def _dump(distributor: Distributor) -> dict:
     {
         "name": "get_distributor",
         "description": "Returns authoritative workspace-scoped information about a distributor.",
-        "parameters": {"type": "OBJECT", "properties": {"distributor_id": {"type": "STRING"}}},
+        "parameters": {"type": "object", "properties": {"distributor_id": {"type": "string"}}},
     },
 )
 def get_distributor(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -48,7 +48,7 @@ def get_distributor(args: dict[str, Any], context: dict[str, Any] | None = None)
     {
         "name": "search_distributors",
         "description": "Search workspace distributors by product/category and location.",
-        "parameters": {"type": "OBJECT", "properties": {"product": {"type": "STRING"}, "location": {"type": "STRING"}}},
+        "parameters": {"type": "object", "properties": {"product": {"type": "string"}, "location": {"type": "string"}}},
     },
 )
 def search_distributors(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:

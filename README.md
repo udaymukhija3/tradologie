@@ -6,7 +6,7 @@ TradeVoice is a small working slice of a multi-tenant voice-support platform. I 
 
 The interesting part is the control plane rather than a scripted chatbot. A signed-in user can inspect distributors and enquiries, simulate a call, talk to the support panel, and create an enquiry only after confirming the exact details. Workspace identity comes from the server, writes are idempotent, and post-call summaries run through a Redis worker.
 
-The default demo is deterministic and does not need paid credentials. There is also an OpenAI Realtime WebRTC adapter and a signature-checked Twilio lifecycle endpoint, but this repository does not claim that live telephone audio has been tested.
+Read this as control-plane work rather than a shipped voice agent, and be clear on what runs by default: `VOICE_MODE` defaults to `mock`, and **the default path invokes no model at all**. It is a deterministic NLU layer with real grammars and intent scoring, not a generative one. An OpenAI Realtime WebRTC adapter is wired in and the server holds the key, but I have not run it against a live project key: the realtime tests exercise a simulated upstream, and there are no latency measurements in this repository. The Twilio endpoint verifies carrier signatures; no live carrier audio has reached it.
 
 ## What is in the project
 
@@ -175,5 +175,7 @@ docker compose up --build -d
 The permanent project key stays in the backend. The browser receives only the negotiated session response. Live audio quality, microphone behavior, and provider latency depend on the account, browser, and hardware and are not represented by the mock tests.
 
 ## Deliberate limits
+
+The largest gap is the one nearest the title: the realtime path has never been exercised against a live model, so nothing here measures turn latency, interruption behaviour, or transcription quality. The instrument exists -- the panel reports input-committed to first-audible-audio per turn -- but it has only ever measured the browser speech fallback.
 
 This is a portfolio-scale vertical slice, not a complete contact-centre product. It does not include live PSTN media streaming, recording consent, DTMF, warm transfer, billing, RAG, multilingual evaluation, a public cloud environment, or production traffic claims. TLS termination, managed PostgreSQL/Redis provisioning, DNS, and automated provider snapshots remain host responsibilities. Realtime session state and rate limiting are still process-local, so the production topology deliberately runs one API replica until those move to shared storage.

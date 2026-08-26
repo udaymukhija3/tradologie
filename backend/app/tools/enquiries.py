@@ -36,7 +36,7 @@ def _trusted(context: dict[str, Any] | None) -> tuple[Session | None, Principal 
     {
         "name": "get_enquiry_status",
         "description": "Returns an enquiry status within the authenticated workspace.",
-        "parameters": {"type": "OBJECT", "properties": {"enquiry_id": {"type": "STRING"}}, "required": ["enquiry_id"]},
+        "parameters": {"type": "object", "properties": {"enquiry_id": {"type": "string"}}, "required": ["enquiry_id"]},
     },
 )
 def get_enquiry_status(args: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -56,13 +56,13 @@ def get_enquiry_status(args: dict[str, Any], context: dict[str, Any] | None = No
         "name": "create_enquiry",
         "description": "Creates an enquiry after a fresh, exact, server-recorded confirmation.",
         "parameters": {
-            "type": "OBJECT",
+            "type": "object",
             "properties": {
-                "product": {"type": "STRING"},
-                "quantity": {"type": "INTEGER"},
-                "unit": {"type": "STRING", "enum": ["kg", "tonnes", "units"]},
-                "destination": {"type": "STRING"},
-                "distributor_id": {"type": "STRING"},
+                "product": {"type": "string"},
+                "quantity": {"type": "integer"},
+                "unit": {"type": "string", "enum": ["kg", "tonnes", "units"]},
+                "destination": {"type": "string"},
+                "distributor_id": {"type": "string"},
             },
             "required": ["product", "quantity", "unit", "destination"],
         },

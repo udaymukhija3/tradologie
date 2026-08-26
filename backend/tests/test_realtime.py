@@ -89,3 +89,31 @@ def test_session_is_bound_to_user(client, other_headers):
     session = create_owned_session()
     response = client.post(f"/api/realtime/sessions/{session.session_id}/tools", headers=other_headers, json={"call_id": "read", "name": "search_distributors", "arguments": {}})
     assert response.status_code == 404
+
+
+def test_tool_schemas_are_lowercase_json_schema():
+    """OpenAI requires JSON Schema types; uppercase is Gemini's dialect.
+
+    The schemas were authored uppercase and rewritten at the boundary by a
+    recursive converter. They are now authored correctly, so this pins the
+    shape rather than the conversion.
+    """
+
+    def types(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("type"), str):
+                yield node["type"]
+            for value in node.values():
+                yield from types(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from types(item)
+
+    definitions = openai_realtime.realtime_tool_definitions()
+    assert definitions
+
+    for definition in definitions:
+        assert definition["type"] == "function"
+        assert definition["parameters"]["type"] == "object"
+        for declared in types(definition["parameters"]):
+            assert declared == declared.lower(), f"{definition['name']}: {declared!r} is not JSON Schema"
