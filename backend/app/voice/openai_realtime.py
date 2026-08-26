@@ -116,19 +116,8 @@ class RealtimeSessionStore:
 session_store = RealtimeSessionStore()
 
 
-def _lowercase_json_schema(value: Any) -> Any:
-    if isinstance(value, dict):
-        converted = {key: _lowercase_json_schema(item) for key, item in value.items()}
-        if isinstance(converted.get("type"), str):
-            converted["type"] = converted["type"].lower()
-        return converted
-    if isinstance(value, list):
-        return [_lowercase_json_schema(item) for item in value]
-    return value
-
-
 def realtime_tool_definitions() -> list[dict[str, Any]]:
-    return [{"type": "function", **_lowercase_json_schema(schema)} for schema in registry.get_schemas()]
+    return [{"type": "function", **schema} for schema in registry.get_schemas()]
 
 
 def _context_summary(context: dict[str, Any]) -> str:
