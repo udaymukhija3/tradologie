@@ -127,3 +127,40 @@ def test_low_confidence_input_does_not_dispatch_a_tool(client, auth_headers):
         websocket.receive_json()
         events = ask(websocket, "I can't find my invoice")
         assert not any(item["type"] == "tool_requested" for item in events)
+
+
+def test_low_confidence_request_asks_using_the_entity_it_resolved(client, auth_headers):
+    """The confidence floor must ask, not print the capability list.
+
+    "I am looking to export basmati rice" resolves a product but scores below
+    the actionable floor. Discarding that product and offering the menu is no
+    better than guessing.
+    """
+    with client.websocket_connect("/ws/voice") as websocket:
+        websocket.send_json({"context": CONTEXT, "access_token": token(client, auth_headers)})
+        websocket.receive_json()
+
+        asked = ask(websocket, "I am looking to export basmati rice")
+        assert not any(item["type"] == "tool_requested" for item in asked)
+        assert "Basmati Rice" in asked[-1]["text"]
+
+        answered = ask(websocket, "yes")
+        assert event(answered, "tool_completed")["name"] == "search_distributors"
+
+
+def test_clarification_can_be_declined(client, auth_headers):
+    with client.websocket_connect("/ws/voice") as websocket:
+        websocket.send_json({"context": CONTEXT, "access_token": token(client, auth_headers)})
+        websocket.receive_json()
+        ask(websocket, "I am looking to export basmati rice")
+        declined = ask(websocket, "no")
+        assert not any(item["type"] == "tool_requested" for item in declined)
+
+
+def test_clarification_does_not_shadow_a_confident_intent(client, auth_headers):
+    """A product mention must not divert an explicit human handoff."""
+    with client.websocket_connect("/ws/voice") as websocket:
+        websocket.send_json({"context": CONTEXT, "access_token": token(client, auth_headers)})
+        websocket.receive_json()
+        events = ask(websocket, "I want to speak to someone about rice")
+        assert event(events, "tool_completed")["name"] == "request_human_support"

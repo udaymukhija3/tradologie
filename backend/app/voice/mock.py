@@ -73,6 +73,7 @@ async def run_mock_session(
 
     session_id = uuid.uuid4().hex
     pending_enquiry: dict[str, Any] | None = None
+    pending_search: dict[str, str] | None = None
     pending_confirmation_id: str | None = None
     slots: dict[str, Any] = {}
 
@@ -178,6 +179,29 @@ async def run_mock_session(
             started_at,
         )
         return validated.model_dump(mode="json"), confirmation.id
+
+    async def run_search(found: nlu.SearchSlots, request_id: str, started_at: float) -> None:
+        result = await execute_tool(
+            "search_distributors",
+            {"product": found.product, "location": found.location},
+            request_id,
+        )
+        matches = result.get("results", [])
+        if not matches:
+            criteria = " and ".join(part for part in (found.product, found.location) if part)
+            await send_response(
+                f"I could not find a distributor for {criteria}." if criteria else "I could not find a distributor matching those criteria.",
+                request_id,
+                started_at,
+            )
+            return
+
+        first = matches[0]
+        lead = f"{first['name']} in {first['location']} is {first['status'].lower()} and supplies {', '.join(first['categories'])}."
+        if len(matches) > 1:
+            others = ", ".join(row["name"] for row in matches[1:3])
+            lead += f" I also found {others}."
+        await send_response(lead, request_id, started_at)
 
     try:
         while True:
@@ -311,6 +335,17 @@ async def run_mock_session(
                 )
                 continue
 
+            if pending_search is not None and intent is Intent.CONFIRM:
+                found = nlu.SearchSlots(**pending_search)
+                pending_search = None
+                await run_search(found, request_id, started_at)
+                continue
+
+            if pending_search is not None and intent is Intent.CANCEL:
+                pending_search = None
+                await send_response(f"No problem. {CAPABILITIES}", request_id, started_at)
+                continue
+
             if intent is Intent.CONFIRM:
                 await send_response(
                     "There is no pending action to confirm. Tell me what enquiry you want to create first.",
@@ -409,28 +444,11 @@ async def run_mock_session(
                 continue
 
             if intent is Intent.SEARCH_DISTRIBUTORS and classification.confidence >= MIN_ACTIONABLE_CONFIDENCE:
-                found = nlu.extract_search_slots(user_text, products=products, locations=locations)
-                result = await execute_tool(
-                    "search_distributors",
-                    {"product": found.product, "location": found.location},
+                await run_search(
+                    nlu.extract_search_slots(user_text, products=products, locations=locations),
                     request_id,
+                    started_at,
                 )
-                matches = result.get("results", [])
-                if not matches:
-                    criteria = " and ".join(part for part in (found.product, found.location) if part)
-                    await send_response(
-                        f"I could not find a distributor for {criteria}." if criteria else "I could not find a distributor matching those criteria.",
-                        request_id,
-                        started_at,
-                    )
-                    continue
-
-                first = matches[0]
-                lead = f"{first['name']} in {first['location']} is {first['status'].lower()} and supplies {', '.join(first['categories'])}."
-                if len(matches) > 1:
-                    others = ", ".join(row["name"] for row in matches[1:3])
-                    lead += f" I also found {others}."
-                await send_response(lead, request_id, started_at)
                 continue
 
             if intent is Intent.CHECK_ENQUIRY and classification.enquiry_id:
@@ -476,6 +494,21 @@ async def run_mock_session(
 
             if intent is Intent.GREETING:
                 await send_response(f"Hello. {CAPABILITIES}", request_id, started_at)
+                continue
+
+            # Last resort. The confidence floor stops the engine guessing, but
+            # discarding an entity it already resolved and printing the
+            # capability list is no better than guessing. If a product or place
+            # was recognised, ask a question that carries it forward.
+            unsure = nlu.extract_search_slots(user_text, products=products, locations=locations)
+            if unsure.product or unsure.location:
+                pending_search = {"product": unsure.product, "location": unsure.location}
+                criteria = " in ".join(part for part in (unsure.product, unsure.location) if part)
+                await send_response(
+                    f"I am not sure what you need there. Did you want me to find distributors for {criteria}?",
+                    request_id,
+                    started_at,
+                )
                 continue
 
             await send_response(

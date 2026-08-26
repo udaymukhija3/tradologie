@@ -499,8 +499,11 @@ export const VoicePanel = ({ context, api, onClose, onEnquiryCreated }: Props) =
         />
         <button type="submit" disabled={!isConnected || !textInput.trim()}>Send</button>
       </form>
-      <div className="dev-trace">
-        <h3>Developer Trace</h3>
+      {/* Collapsible: the trace is evidence of the tool and confirmation
+          lifecycle, not leftover debug output, so it is a labelled control the
+          reader can close rather than something permanently in their way. */}
+      <details className="dev-trace" open>
+        <summary>Developer trace</summary>
         <div>Context: {context.selected_distributor_id || 'None selected'}</div>
         <div>Engine: {runtime.voice_mode}</div>
         <div>Transport: {runtime.speech_transport}</div>
@@ -514,7 +517,7 @@ export const VoicePanel = ({ context, api, onClose, onEnquiryCreated }: Props) =
             <span>{trace.text}</span>
           </div>
         ))}
-      </div>
+      </details>
     </aside>
   );
 };
